@@ -26,6 +26,9 @@ data class SourceReference(
     val storage: SourceStorage,
     val location: String,
     val originalDurationUs: Long,
+    val originalUri: String? = null,
+    val mimeType: String? = null,
+    val sizeBytes: Long? = null,
 )
 
 @Serializable

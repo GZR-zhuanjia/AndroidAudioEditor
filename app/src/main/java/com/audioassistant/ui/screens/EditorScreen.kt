@@ -29,8 +29,8 @@ fun EditorScreen(song: SongItemUi?) {
             item {
                 Text(song?.name ?: "尚未选择歌曲", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    if (song == null) "请先从歌曲列表选择歌曲。当前版本暂未开放文件导入。"
-                    else "试听和剪切暂未开放，原始文件没有改动。",
+                    if (song == null) "请先从歌曲列表选择歌曲。"
+                    else song.error ?: "试听和剪切暂未开放，原始文件没有改动。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

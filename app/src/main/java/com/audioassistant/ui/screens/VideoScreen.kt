@@ -25,7 +25,10 @@ import com.audioassistant.ui.components.formatSize
 import com.audioassistant.ui.components.formatTime
 
 @Composable
-fun VideoScreen(videos: List<VideoItemUi>, onImport: (String) -> Unit, onSettings: () -> Unit, onUnavailable: (String) -> Unit) {
+fun VideoScreen(
+    videos: List<VideoItemUi>, enabled: Boolean, onPhoto: () -> Unit, onFiles: () -> Unit,
+    onSettings: () -> Unit, onRemove: (String) -> Unit, onUnavailable: (String) -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.weight(1f), contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -34,13 +37,13 @@ fun VideoScreen(videos: List<VideoItemUi>, onImport: (String) -> Unit, onSetting
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onImport("从相册选择视频") }, modifier = Modifier.fillMaxWidth()) { Text("从相册选择") }
-                    OutlinedButton(onClick = { onImport("从文件中选择视频") }, modifier = Modifier.fillMaxWidth()) { Text("从文件中选择") }
+                    Button(onClick = onPhoto, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("从相册选择") }
+                    OutlinedButton(onClick = onFiles, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("从文件中选择") }
                 }
             }
             item { Text("待转换 · ${videos.size} 个", style = MaterialTheme.typography.titleMedium) }
             if (videos.isEmpty()) {
-                item { EmptyState("还没有添加视频", "添加后可在这里查看时长、文件大小和转换状态。当前版本暂未开放文件导入与转换。") }
+                item { EmptyState("还没有添加视频", "添加后可在这里查看时长、文件大小和转换状态。转换功能尚未开放。") }
             }
             items(videos, key = { it.id }) { video ->
                 Card(Modifier.fillMaxWidth()) {
@@ -51,7 +54,7 @@ fun VideoScreen(videos: List<VideoItemUi>, onImport: (String) -> Unit, onSetting
                         video.progress?.let { LinearProgressIndicator(progress = { it.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth()) }
                         video.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         Row {
-                            TextButton(onClick = { onUnavailable("移除视频") }) { Text("移除") }
+                            TextButton(onClick = { onRemove(video.id) }, enabled = enabled) { Text("移除") }
                             if (video.error != null) TextButton(onClick = { onUnavailable("重试转换") }) { Text("重试") }
                         }
                     }

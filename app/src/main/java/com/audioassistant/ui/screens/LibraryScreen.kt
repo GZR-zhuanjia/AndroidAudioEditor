@@ -30,7 +30,7 @@ import com.audioassistant.ui.components.PagePadding
 import com.audioassistant.ui.components.formatTime
 
 @Composable
-fun LibraryScreen(results: List<ResultItemUi>, category: ResultCategory, onCategory: (ResultCategory) -> Unit, onAction: (String) -> Unit) {
+fun LibraryScreen(results: List<ResultItemUi>, category: ResultCategory, onCategory: (ResultCategory) -> Unit, onAction: (String, String) -> Unit) {
     val filtered = results.filter { category == ResultCategory.ALL || it.category == category }
     LazyColumn(contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -52,19 +52,19 @@ fun LibraryScreen(results: List<ResultItemUi>, category: ResultCategory, onCateg
 }
 
 @Composable
-private fun ResultCard(result: ResultItemUi, onAction: (String) -> Unit) {
+private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit) {
     var expanded by rememberSaveable(result.id) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(result.name, style = MaterialTheme.typography.titleMedium)
             Text("${result.category.label} · ${formatTime(result.durationUs)}")
             Row {
-                TextButton(onClick = { onAction("试听成果") }) { Text("试听") }
+                TextButton(onClick = { onAction(result.id, "试听成果") }) { Text("试听") }
                 Column {
                     TextButton(onClick = { expanded = true }) { Text("更多操作") }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                         listOf("重命名", "分享", "另存", "添加到拼接", "删除").forEach { action ->
-                            DropdownMenuItem(text = { Text(action) }, onClick = { expanded = false; onAction(action) })
+                            DropdownMenuItem(text = { Text(action) }, onClick = { expanded = false; onAction(result.id, action) })
                         }
                     }
                 }

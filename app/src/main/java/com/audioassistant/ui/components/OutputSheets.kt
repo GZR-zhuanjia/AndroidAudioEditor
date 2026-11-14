@@ -29,7 +29,7 @@ fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize
     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("导出拼接成果", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(
-            value = name, onValueChange = onName, label = { Text("文件名（不含扩展名）") },
+            value = name, onValueChange = onName, enabled = state.ready, label = { Text("文件名（不含扩展名）") },
             singleLine = true, isError = name.isBlank(), modifier = Modifier.fillMaxWidth(),
             supportingText = { Text(if (name.isBlank()) "请输入文件名" else "同名时会创建新副本，不覆盖已有成果") },
         )
@@ -38,6 +38,7 @@ fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize
             Modifier.fillMaxWidth().toggleable(
                 value = state.exportSettings.normalizeLoudness,
                 role = Role.Switch,
+                enabled = state.ready,
                 onValueChange = onNormalize,
             ),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -46,11 +47,11 @@ fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize
                 Text("响度均衡", style = MaterialTheme.typography.titleMedium)
                 Text("减小不同歌曲间的主观响度差异。普通试听不代表均衡后的效果。", style = MaterialTheme.typography.bodySmall)
             }
-            Switch(checked = state.exportSettings.normalizeLoudness, onCheckedChange = null)
+            Switch(checked = state.exportSettings.normalizeLoudness, enabled = state.ready, onCheckedChange = null)
         }
         Text("歌曲数量：${state.songs.size} 首")
         Text("预计时长：${formatTime(state.songs.sumOf { it.editedDurationUs })}")
-        Text("导出功能暂未开放。这里的设置仅在当前会话保留。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("导出功能暂未开放。设置会随最近项目自动保存。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("开始导出") }
     }
 }
@@ -75,7 +76,7 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit) 
     }
 }
 
-/** 只供未来已验证的真实成果事件调用。阶段 2 没有成功事件生产者。 */
+/** 只供未来已验证的真实成果事件调用。当前没有成功事件生产者。 */
 @Composable
 fun SuccessOptions(result: ResultItemUi, onAction: (String) -> Unit, onLibrary: () -> Unit) {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -1,27 +1,27 @@
 # 架构与工具版本
 
-## 当前源码边界
+## 当前源码结构（阶段 3）
 
-单个 `:app`，不引入 DI 框架或多模块。层级：UI → ViewModel → Repository / Service → Native Audio Engine。
+单个 `:app`，不引入多模块或 DI 框架，依赖方向 UI → ViewModel → Repository / Service → Native Audio Engine。
 
 ```text
-app/src/main/
-  AndroidManifest.xml          无网络/相册全量读取权限，禁备份
-  java/com/audioassistant/
-    MainActivity.kt           Compose 启动宿主
-    ui/AudioAssistantApp.kt   共享 Scaffold / NavHost / 模态面板
-    ui/WorkspaceViewModel.kt  Activity 作用域会话 UI 状态
-    ui/navigation/            四一级路由 + 裁剪子路由
-    ui/screens/               首页、视频、工作区、裁剪器、成果库
-    ui/components/            状态、命名/导出/更多编辑面板
-    ui/theme/                 Material 3 系统深浅色主题
-    model/EditProject.kt      可序列化片段、歌曲、引用、导出设置
-    data/RecentProjectRepository.kt  Flow/挂起存取契约，无实现
-    engine/NativeAudioEngine.kt      探测能力边界，无实现
-  res/values{,-night}/        中文名称、窗口主题
+app/src/main/java/com/audioassistant/
+  MainActivity.kt                   Compose 宿主
+  model/EditProject.kt              微秒片段、来源、歌曲和导出设置
+  model/WorkspaceSnapshot.kt        唯一项目 + 成果元数据快照
+  data/RecentProjectRepository.kt   最近项目契约
+  data/FileWorkspaceRepository.kt   Mutex / AtomicFile / JSON / 受控路径与引用校验
+  data/MediaImporter.kt             系统元数据、持久读授权与按需内部副本
+  ui/WorkspaceViewModel.kt          Activity 作用域列表、串行写操作、错误与面板状态
+  ui/AudioAssistantApp.kt           系统选择器、唯一 NavHost / Scaffold
+  ui/navigation/                   四一级入口 + 单曲裁剪子路由
+  ui/screens/                      五类中文页面
+  ui/components/                   面板、状态、拖动排序状态
+  ui/theme/                        系统深浅色 Material 3
+  engine/NativeAudioEngine.kt       仍为无实现能力契约
 ```
 
-阶段 2 已增加 ui/navigation、各功能页和共享 ViewModel。阶段 3 在 data 中实现存储和文件服务；阶段 4 增加 playback/，实现 Media3 控制；阶段 5 才增加 cpp/、NDK 脚本、JNI 与原生许可。不用空目录、假二进制或成功桩宣称完成。
+阶段 4 接入播放和编辑，阶段 5 才增加 cpp/、NDK脚本、JNI与许可；阶段 6 才建立真实转换任务。所有已完成项仅表示源码已写，未构建/运行。
 
 ## 固定版本
 
@@ -40,53 +40,57 @@ app/src/main/
 | Navigation Compose | 2.9.0 | 已接线；未编译/运行 |
 | Media3 ExoPlayer | 1.7.1 | 已声明，未使用 |
 | Coroutines Android | 1.10.2 | 已声明 |
-| Serialization JSON | 1.8.1 | 已声明，尚无磁盘持久化 |
+| Serialization JSON | 1.8.1 | 已接入 JSON 原子持久化，未编译/运行 |
 | Android Studio | 支持 AGP 8.10 的 Meerkat Feature Drop 2024.3.2 或兼容更新稳定版 | 本地选用，未验证 |
 | NDK / CMake | 阶段 5 冻结；优先评估 NDK r28+ | 当前不安装、不配置 externalNativeBuild |
 | FFmpeg / LAME | 阶段 5 冻结具体源码版本和校验值 | 当前未引入 |
 
 版本表表示源码选择，不代表依赖解析、构建兼容性已验证。版本目录 `gradle/libs.versions.toml` 为依赖配置来源。Wrapper 从旧仓库完整复制的通用构建工具文件；不复用旧产品层代码。旧仓库检查基点 4144c1ccf6a293a3b4f179c7d9ab7aa3c5209d1b。
 
-## 状态和路由（阶段 2 已接线，未运行）
+## 路由与 UI 状态
 
-单 Activity；四个一级入口共用模块状态持有者，首页卡片导航同一路由。`WorkspaceViewModel` 在 NavHost 外取得，Activity 作用域管理空队列/歌曲/成果视图契约、成果分类、命名草稿、导出设置和面板状态；当前没有导入/任务数据生产者，不将空状态视作文件保留已验证。设置可在会话内修改，不承诺磁盘或进程死亡恢复。
+首页卡片和底栏使用相同 Destination/导航方法，NavHost 外的 WorkspaceViewModel 共用歌曲/视频/成果状态；launchSingleTop 与 saveState/restoreState 保留页面 UI 状态。编辑子路由 `editor?songId={songId}` 隐藏底栏，当前仅查看真实歌曲信息，播放/剪切禁用。
 
-Navigation Compose 使用同一 Destination、launchSingleTop、popUpTo + saveState/restoreState，保留页面滚动；各一级页面的系统返回回首页，首页由系统处理退出。裁剪器 route 为 `editor?songId={songId}`，隐藏底栏，工具栏与系统返回共用出口，面板返回优先关闭。当前无可编辑数据，返回只退出、不提示“已保存”；阶段 3/4 必须接入真实自动保存再退出。暂不实现后台任务恢复。进程重开仅恢复唯一最近项目，不能承诺恢复转换任务。
+底部关键操作固定、LazyColumn 独立滚动。系统返回先关面板/对话框；拖动时返回只请求取消、恢复原序；裁剪器返回工作区；一级模块返回首页。主 Scaffold 消费 Insets。实际导航、键盘和手势布局待设备验证。
 
-## 片段与时间
+Activity Result：PickMultipleVisualMedia(VideoOnly) 一次选一或多视频；OpenMultipleDocuments 分别约束 video/* 与 audio/*，另有 OpenDocument 用于重新关联原曲。无需新增权限。选择器取消不改变数据；缺少选择器可报告错误。进程重建的结果若先于项目加载返回，会排队等待，不能静默丢弃。
 
-`AudioSegment` 记录 sourceId 和原曲半开区间 `[startUs, endUs)`，非负整数微秒，末端必须大于起点。`SongEdit.segments` 顺序即编辑成品顺序。片段总和为成品时长；以累计长度定位目标片段并加原曲起点得到源时间。精确接缝定位右片段起点，成品末端单独处理。
+## 时间与项目数据
 
-后续算法须检查溢出、时间范围、来源存在和原始时长上限。删除成品区间时拆分交叠片段、保留两侧；不改源文件。撤销重做使用不可变编辑快照；恢复删除内容保留来源及足够历史信息，方案在阶段 4 落实。当前仅数据类型，没有映射、删除、撤销或恢复实现。
+AudioSegment 为原曲半开区间 `[sourceStartUs, sourceEndUs)`，整数微秒、非负且结束大于开始；片段记录源 ID，歌曲记录顺序片段。SourceReference 记录稳定 ID、名称、原始时长、持久 URI/受控内部相对路径、原导入 URI、可获取的 MIME/大小。
 
-项目保存 `schemaVersion`、来源集合、歌曲顺序/片段和导出设置。阶段 3 实现版本校验、缺失引用错误、串行写入和临时 JSON 原子替换，避免乱序覆盖。是否跨会话保存撤销历史在阶段 4 明确，不得以丢失保留片段代替迁移。
+导入建立一段 `[0, originalDurationUs)`；恢复完整保留已存片段，不展开/重新编码源文件。校验来源存在、同曲来源一致、终点不越原曲、ID 不重复、时长累加不溢出。时间映射、跨段删除、撤销/恢复由阶段 4 实现，本阶段不假装可剪切。
 
-## 文件引用和生命周期（设计，未接通）
+唯一 `files/project/workspace.json` 保存 WorkspaceSnapshot(schemaVersion=1)，包含唯一 EditProject(schemaVersion=1) 和成果元数据列表。成果元数据只定义来源分类、真实内部路径、名称、时长和大小；普通导入不登记成果。本阶段无成果生产者，真实成果新增/删除事务在阶段 6/7 完成。
 
-来源用稳定 ID；外部为持久 URI，内部为应用受控相对路径。导入优先保留 SAF 持久读授权，处理 provider 不支持持久授权、撤销、文件消失；Photo Picker 不假设永久可用。需要长期使用且不能可靠保留时，按需受控内部复制，先检查容量、完成验证、去重及登记，不能每次切页复制。
+## 持久化与失败保护
 
-规划内部 `files/results/` 正式成果、`files/sources/` 受控来源、`files/project/` 唯一项目、`cache/jobs/` 临时产物、可重建波形缓存。内部清理仅允许这些受控目录，不信任反序列化路径，不删除外部 URI。
+ViewModel 的 Channel 串行处理导入、移除、排序和设置；Repository 在 Dispatchers.IO 下以 Mutex 保护读写。AtomicFile + 明确 fsync 完成替换后才发布 StateFlow；临界写入与发布不可取消，防止已落盘的源引用被当作未提交清理。设置改变逐次排队存盘，不建立项目版本管理或任务恢复系统。
 
-成果和项目引用同一文件实体；成果记录移除不等于实体立即删除。项目和活动任务持有引用，引用全释放后方可清理。状态变更串行提交，启动时对照项目/成果索引清理无引用残留；先恢复索引再清理，损坏索引需保守保留并报错。阶段 3 建立引用设计，阶段 7 完成成果操作与清理。
+项目读取/结构校验失败或版本未知时保留原文件、禁止写入和清理，显示真实错误；不会用空项目覆盖。文件失效只给来源标记，不丢弃歌曲/片段。恢复后、应用重新回到前台或手动检查时验证来源可打开；重新选择同一原曲可保留旧片段，若新时长不足覆盖旧范围则拒绝。仅靠元数据无法证明重新选择的文件音频内容相同，由用户选择同一原曲。
 
-任务输出先到临时文件，完成且检查真实媒体/大小后移到内部唯一名称，最后登记索引；异常回滚，不产生假成功。外部另存用 SAF 复制，唯一命名、不覆盖；保存授权仅尽可能复用，不保证 U 盘可用。
+排序期间仅本地预览，松手单次提交最终 ID 顺序；取消按钮、系统返回、指针取消和页面销毁均不提交。靠列表边缘按帧滚动并更新目标位置；上下移走相同持久化路径。保存失败回到最后提交的列表并显示错误。设置与写入队列仍有尚未落盘的短暂窗口，进程立即被杀可能丢失未提交操作，不能宣称后台恢复。
 
-## 原生引擎（后续实施）
+## 来源、复制与引用安全
 
-阶段 5 编写 JNI C++ 引擎，探测、波形、进度与取消；阶段 6 接通转换/渲染。服务层负责 URI 适配、任务调度与文件提交，UI 不拼 FFmpeg 命令。阻塞分析放后台；取消应传至原生任务并清理未完成产物。流复制需验证 MP3 音轨兼容且无音频变换。
+视频仅保留当前会话 URI/元数据，不复制大型视频，不存最近项目、不承诺重开恢复队列。歌曲先尝试/复用持久读授权；provider 不支持时才在 IO 线程建立受控 `files/sources/<UUID>.source` 副本，这是源字节副本，不是格式转换。
 
-loudnorm 按每首歌剪后内容分别分析并处理，分析参数用于处理，最后按顺序拼接编码；不将未归一化试听标为最终响度效果。Media3 片段列表遵循保留顺序，接缝精度受格式、解码和编码延迟影响，需本地验证。
+副本先 `<UUID>.part`，检查可用空间（保留 8 MiB），分块复制、支持协程取消、fsync、非零/已知大小一致检查后重命名，再提交引用；失败清理本次未引用文件。同一规范化 URI 去重，不能凭同名误合并；不同 provider URI 对应同一内容时可能保留为独立来源，不做大文件哈希扫描。
 
-16 KB：AGP 采用未压缩原生库打包策略；阶段 5 使用支持 16 KB 的 NDK/链接配置，检查全部自编与第三方 ELF LOAD 对齐及 APK 对齐，不能仅设 ABI 或 Gradle 标志就声称兼容。当前无 .so，尚无兼容性验证。
+路径必须是规范相对路径，且 canonicalFile 父目录仅 sources/ 或 results/；不接受绝对路径、../ 或规范化后不同的别名。isReferenced 同时检查项目和成果。移除歌曲先提交引用释放，再清理；成果若仍在索引中保留实体。外部原曲和另存副本从不删除。读取损坏项目时禁止清理，避免误删有效来源。
 
-## 开源许可边界
+启动成功加载后，只扫描本应用 sources/ 中 UUID 命名的 .part/.source，删除不再被项目/成果引用的文件，不扫描 results/ 或未知目录。原生任务临时文件和活动任务引用尚不存在，阶段 6 必须接入任务引用后才能扩展清理；阶段 7 完善成果删除和全生命周期。
 
-Wrapper 保留 Apache-2.0 版权头，官方来源 https://github.com/gradle/gradle/tree/v8.11.1/gradle/wrapper ；JAR 校验记录见 LOCAL_VALIDATION。AndroidX/Compose、Kotlin、Coroutines、Serialization 等依赖的许可与通知在实际分发前按固定版本核对。阶段 1 未纳入任何 FFmpeg/LAME 源码或二进制，不以旧库许可替代未来实际配置的许可；阶段 5 必须随源码版本、编译选项记录 FFmpeg/LAME 及传递原生依赖的完整许可、源码提供与重链接义务，避免未经核实引入 GPL/nonfree 选项。当前没有可发布音频引擎。
+移除/失败时尽量释放本次持久读授权；若视频会话还用到同一 URI 则保守保留。进程在获取授权但未登记前突然结束，或保护视频后退出时，可能保留无文件实体的读授权；不以全量撤销 provider 权限冒险破坏有效引用，阶段 7 再完善授权账本。内部未登记副本会在下一次有效加载后回收。
 
-## 阶段 2 UI 与未接线边界
+## 后续引擎与兼容性
 
-首页卡片先进入模块，导入按钮弹暂不可用说明。工作区从成果库入口复用唯一成果库路由；空状态允许“查看裁剪器”，不创建虚构歌曲。列表使用 LazyColumn；视频/工作区关键操作固定底部；裁剪主控只有常用播放/跳转/标记按钮和删除，精确时间与其他编辑分组放入面板。
+当前使用 MediaExtractor 读取真实轨道类型/时长，必要时 MediaMetadataRetriever 补充时长，OpenableColumns 读名称/大小；不支持的媒体明确拒绝或视频显示未知时长。不是假探测，也不替代阶段 5 的 FFmpeg 格式覆盖。波形、播放器、原生探测/转换均未接入。
 
-转换名与导出名输入不自动包含扩展名；响度均衡默认为开，修改仅影响会话设置。转换和导出提交按钮禁用，编辑/排序操作禁用；目前不存在真实结果/任务。加载/错误横幅、结果卡片菜单、成功面板均提供可组合 UI，成功面板只有 completedResult 非空才显示，当前没有写入该状态的生产者。不得为了预览而手动写入成功。
+后续服务负责 URI 适配、进度/取消、临时文件验证提交，UI 不直接拼 FFmpeg 命令。loudnorm 按每曲剪后内容独立分析处理，再按顺序拼接；Media3 预览遵循片段，受格式和编码延迟影响。不得以普通试听冒充最终响度或编码结果。
 
-主 Scaffold 使用系统 Insets，并消费内容 padding；Bottom Sheet 使用 Material3 模态返回/遮罩和默认窗口 Insets。布局、小屏、键盘、TalkBack 及预测返回仍需用户本地验证。没有截图或运行证据。
+16 KB 仍仅有未压缩原生库打包配置；阶段 5 固定支持 16 KB 的 NDK/全部原生依赖，检查 ELF/包对齐并由用户本地验证，当前无 .so 或兼容性结论。
+
+## 开源许可
+
+Wrapper 保留 Apache-2.0 版权头，JAR 与 Gradle 官方 v8.11.1 对照记录见 LOCAL_VALIDATION。AndroidX/Compose、Kotlin 等分发前按固定版本核对许可。尚未纳入 FFmpeg/LAME，阶段 5 必须随精简配置记录完整许可、传递依赖、源码提供/重链接义务，不未经核实启用 GPL/nonfree。

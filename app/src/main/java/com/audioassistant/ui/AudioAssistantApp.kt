@@ -2,6 +2,9 @@ package com.audioassistant.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +25,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -50,6 +58,21 @@ import com.audioassistant.ui.screens.VideoScreen
 fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     // ViewModel 属于 Activity，绝不在每个 composable 路由内重新创建队列。
     val state by workspace.state.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (state.ready && !state.isWorking && state.songs.isNotEmpty()) workspace.refreshSources()
+    }
+    var relinkSongId by rememberSaveable { mutableStateOf<String?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { workspace.importVideos(it) }
+    val videoFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { workspace.importVideos(it) }
+    val audioFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { workspace.importSongs(it) }
+    val relinkFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val songId = relinkSongId
+        relinkSongId = null
+        if (uri != null && songId != null) workspace.replaceSongSource(songId, uri)
+    }
+    fun launchPicker(action: () -> Unit) {
+        try { action() } catch (_: Exception) { workspace.reportError("无法打开系统选择器，请确认设备上有可用的文件选择应用后重试。") }
+    }
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: Destination.HOME.route
@@ -64,7 +87,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         }
     }
     fun exitEditor() {
-        // 当前没有可编辑数据；阶段 3/4 接入自动持久化后才承诺返回保存。
+        // 项目列表/设置已逐次自动保存；阶段 4 接入剪辑后须复用同一写入队列。
         nav.popBackStack()
     }
 
@@ -88,6 +111,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                 Destination.entries.forEach { destination ->
                     NavigationBarItem(
                         selected = current == destination,
+                        enabled = !state.isReordering,
                         onClick = { navigateTo(destination) },
                         icon = { Icon(destination.icon, contentDescription = null) },
                         label = { Text(destination.title) },
@@ -103,19 +127,34 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     HomeScreen(state.songs.isNotEmpty(), { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
                 }
                 composable(Destination.VIDEO.route) {
-                    VideoScreen(state.videos, workspace::unavailable, { workspace.showSheet(AppSheet.VIDEO_NAMES) }, workspace::unavailable)
+                    VideoScreen(
+                        videos = state.videos, enabled = state.ready && !state.isWorking,
+                        onPhoto = { launchPicker { photoPicker.launch(PickVisualMediaRequest(mediaType = ActivityResultContracts.PickVisualMedia.VideoOnly)) } },
+                        onFiles = { launchPicker { videoFiles.launch(arrayOf("video/*")) } },
+                        onSettings = { workspace.showSheet(AppSheet.VIDEO_NAMES) },
+                        onRemove = workspace::removeVideo, onUnavailable = workspace::unavailable,
+                    )
                 }
                 composable(Destination.EDIT.route) {
                     EditWorkspaceScreen(
-                        songs = state.songs,
-                        onImport = { workspace.unavailable("从文件添加歌曲") },
+                        songs = state.songs, enabled = state.ready && !state.isWorking, cancelDragSignal = state.cancelDragSignal,
+                        onImport = { launchPicker { audioFiles.launch(arrayOf("audio/*")) } },
                         onLibrary = { navigateTo(Destination.LIBRARY) },
                         onEditor = { songId -> nav.navigate("editor?songId=${Uri.encode(songId.orEmpty())}") { launchSingleTop = true } },
                         onExport = { workspace.showSheet(AppSheet.EXPORT) },
+                        onOrder = workspace::reorderSongs, onMove = workspace::moveSong,
+                        onRemove = workspace::removeSong,
+                        onRelink = { id -> relinkSongId = id; launchPicker { relinkFile.launch(arrayOf("audio/*")) } },
+                        onRefresh = workspace::refreshSources, onDragState = workspace::setReordering,
                     )
                 }
                 composable(Destination.LIBRARY.route) {
-                    LibraryScreen(state.results, state.category, workspace::selectCategory, workspace::unavailable)
+                    LibraryScreen(state.results, state.category, workspace::selectCategory) { resultId, action ->
+                        if (action == "添加到拼接") {
+                            if (state.ready && !state.isWorking) workspace.addResultToProject(resultId)
+                            else workspace.reportError("正在读取或保存项目，请稍后再试。")
+                        } else workspace.unavailable(action)
+                    }
                 }
                 composable(EDITOR_ROUTE, arguments = listOf(navArgument("songId") { type = NavType.StringType; defaultValue = "" })) { editorEntry ->
                     val songId = editorEntry.arguments?.getString("songId")
@@ -126,10 +165,12 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     }
 
     // 放在 NavHost 之后注册，让工具栏与系统返回走相同出口；弹窗/面板优先关闭自身。
-    BackHandler(enabled = !inEditor && current != Destination.HOME && state.sheet == null && state.completedResult == null) {
+    BackHandler(enabled = !inEditor && !state.isReordering && current != Destination.HOME && state.sheet == null && state.completedResult == null) {
         navigateTo(Destination.HOME)
     }
     BackHandler(enabled = inEditor && state.sheet == null && state.completedResult == null) { exitEditor() }
+
+    BackHandler(enabled = state.isReordering) { workspace.requestCancelDrag() }
 
     val success = state.completedResult
     if (success != null) {
