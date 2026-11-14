@@ -94,3 +94,19 @@ ViewModel 的 Channel 串行处理导入、移除、排序和设置；Repository
 ## 开源许可
 
 Wrapper 保留 Apache-2.0 版权头，JAR 与 Gradle 官方 v8.11.1 对照记录见 LOCAL_VALIDATION。AndroidX/Compose、Kotlin 等分发前按固定版本核对许可。尚未纳入 FFmpeg/LAME，阶段 5 必须随精简配置记录完整许可、传递依赖、源码提供/重链接义务，不未经核实启用 GPL/nonfree。
+
+## UI 专项设计系统（阶段 3 后，不推进业务）
+
+`ui/theme/AppColors.kt` 定义成对深浅 ColorScheme；`AppTypography.kt` 固定字体层级，`AppDimensions.kt` 集中 AppSpacing、AppShapes 和面板顶部圆角。AudioAssistantTheme 统一注入，页面不单独硬编码配色。
+
+`AppIcon.kt` 将37个本地线性 VectorDrawable 映射成语义图标；stroke 1.8/24视口，主题 tint，资源离线打包，没有图像截图、网络字体或新依赖。波形图标是标识，不是音频采样数据。
+
+`DesignComponents.kt` 统一 IconBadge、横向 FeatureCard、EmptyState、SectionHeader、Primary/SecondaryActionButton、TextAction、ActionDock、NoteRow、SheetHeader 和 HomeAppBar。ActionPair 按可用宽度/字体放置并列操作；固定底部与标记按钮优先紧凑并列且允许文字换行，不强制固定高度。
+
+首页标识在顶栏，两功能卡为核心，真实最近记录用简洁卡；空视频页不显示醒目转换按钮，有队列才显示固定命名区。歌曲选中只控制本地可展开操作，不改变业务状态；拖柄坐标随新卡片容器与垂直对齐计算，排序算法、提交/取消接口保持原样。成果分类与导入工具栏固定，列表独立滚动。
+
+裁剪信息与固定主控分离；矮屏横向分区，必要时仅滚动控制分区而非整个页面。选区未实现，始终显示真实未标记状态；试听选区/取消标记保留在更多面板，音频行为继续禁用。导出/命名/精调/成功面板统一标题和关闭入口、可滚动内容；导出/转换确认区固定。
+
+Navigation Compose 四项 enter/exit/pop transition 均为 None，避免默认淡入淡出拖慢切页。未增加内容尺寸、卡片弹簧、入场或排序过渡动画；原排序帧滚动是功能性滚动，保留。Material 标准 ripple/指示/面板反馈不以内部API强改。
+
+底栏沿用 NavigationBar 默认安全区处理，胶囊选中和12sp短标签；Scaffold 继续消费 content padding，顶栏处理系统状态区，Bottom Sheet 沿用默认键盘/系统Insets。设备/大字/横屏验证仍空缺。Repository、模型、ViewModel、引擎、文件规则和依赖版本均无修改。

@@ -2,14 +2,14 @@ package com.audioassistant.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 @Composable
 fun AudioAssistantTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
+        colorScheme = if (isSystemInDarkTheme()) AppColors.Dark else AppColors.Light,
+        typography = AppTypography,
+        shapes = AppShapes,
         content = content,
     )
 }

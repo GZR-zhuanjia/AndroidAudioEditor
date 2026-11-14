@@ -5,30 +5,38 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -40,10 +48,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.audioassistant.ui.components.AppGlyph
+import com.audioassistant.ui.components.AppIcon
 import com.audioassistant.ui.components.EditorOptions
 import com.audioassistant.ui.components.ExportOptions
+import com.audioassistant.ui.components.HomeAppBar
 import com.audioassistant.ui.components.StateBanner
 import com.audioassistant.ui.components.SuccessOptions
+import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.VideoNameOptions
 import com.audioassistant.ui.navigation.Destination
 import com.audioassistant.ui.navigation.EDITOR_ROUTE
@@ -52,6 +64,8 @@ import com.audioassistant.ui.screens.EditorScreen
 import com.audioassistant.ui.screens.HomeScreen
 import com.audioassistant.ui.screens.LibraryScreen
 import com.audioassistant.ui.screens.VideoScreen
+import com.audioassistant.ui.theme.AppSheetShape
+import com.audioassistant.ui.theme.AppSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,38 +107,57 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
 
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(if (inEditor) "单曲裁剪" else if (current == Destination.HOME) "音频助手" else current.title) },
-                navigationIcon = {
-                    if (inEditor) IconButton(onClick = { exitEditor() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回歌曲列表")
+            if (!inEditor && current == Destination.HOME) HomeAppBar { workspace.unavailable("设置") }
+            else TopAppBar(
+                title = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+                        if (!inEditor) AppGlyph(current.icon, tint = MaterialTheme.colorScheme.primary)
+                        Text(if (inEditor) "单曲裁剪" else current.title, style = MaterialTheme.typography.headlineSmall)
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                navigationIcon = {
+                    if (inEditor) IconButton(onClick = { exitEditor() }) { AppGlyph(AppIcon.BACK, "返回歌曲列表") }
+                },
                 actions = {
-                    if (inEditor) TextButton(onClick = { workspace.showSheet(AppSheet.MORE_EDIT) }) { Text("更多编辑") }
+                    if (inEditor) TextAction("更多编辑", AppIcon.TUNE, { workspace.showSheet(AppSheet.MORE_EDIT) })
                 },
             )
         },
         bottomBar = {
-            if (!inEditor) NavigationBar {
-                Destination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = current == destination,
-                        enabled = !state.isReordering,
-                        onClick = { navigateTo(destination) },
-                        icon = { Icon(destination.icon, contentDescription = null) },
-                        label = { Text(destination.title) },
-                    )
+            if (!inEditor) Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+                    Destination.entries.forEach { destination ->
+                        NavigationBarItem(
+                            selected = current == destination,
+                            enabled = !state.isReordering,
+                            onClick = { navigateTo(destination) },
+                            icon = { AppGlyph(destination.icon, modifier = Modifier.size(AppSpacing.icon)) },
+                            label = { Text(destination.navLabel, style = MaterialTheme.typography.labelMedium) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             StateBanner(state.loadingMessage, state.errorMessage, workspace::dismissError)
-            NavHost(navController = nav, startDestination = Destination.HOME.route, modifier = Modifier.weight(1f)) {
+            NavHost(navController = nav, startDestination = Destination.HOME.route, modifier = Modifier.weight(1f),
+                enterTransition = { EnterTransition.None }, exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None }, popExitTransition = { ExitTransition.None },
+            ) {
                 composable(Destination.HOME.route) {
-                    HomeScreen(state.songs.isNotEmpty(), { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
+                    HomeScreen(state.songs.size, { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
                 }
                 composable(Destination.VIDEO.route) {
                     VideoScreen(
@@ -174,18 +207,20 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
 
     val success = state.completedResult
     if (success != null) {
-        ModalBottomSheet(onDismissRequest = workspace::dismissSuccess, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            SuccessOptions(success, workspace::unavailable) {
+        ModalBottomSheet(onDismissRequest = workspace::dismissSuccess, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
+            SuccessOptions(success, workspace::unavailable, onLibrary = {
                 workspace.dismissSuccess()
                 navigateTo(Destination.LIBRARY)
-            }
+            }, onClose = workspace::dismissSuccess)
         }
     } else if (state.sheet != null) {
-        ModalBottomSheet(onDismissRequest = workspace::closeSheet, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        ModalBottomSheet(onDismissRequest = workspace::closeSheet, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
             when (state.sheet) {
-                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName)
-                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize)
-                AppSheet.MORE_EDIT -> EditorOptions()
+                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, workspace::closeSheet)
+                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, workspace::closeSheet)
+                AppSheet.MORE_EDIT -> EditorOptions(workspace::closeSheet)
                 null -> Unit
             }
         }
@@ -193,6 +228,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     state.notice?.let { notice ->
         AlertDialog(
             onDismissRequest = workspace::dismissNotice,
+            icon = { AppGlyph(AppIcon.INFO, tint = MaterialTheme.colorScheme.primary) },
             title = { Text(notice.title) },
             text = { Text(notice.message) },
             confirmButton = { TextButton(onClick = workspace::dismissNotice) { Text("知道了") } },

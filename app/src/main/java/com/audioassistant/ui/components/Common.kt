@@ -3,16 +3,20 @@ package com.audioassistant.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.audioassistant.ui.theme.AppSpacing
 import java.util.Locale
 
 fun formatTime(durationUs: Long?): String {
@@ -30,30 +34,27 @@ fun formatSize(bytes: Long?): String = when {
     else -> "$bytes 字节"
 }
 
-val PagePadding = PaddingValues(20.dp)
-
-@Composable
-fun EmptyState(title: String, description: String, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
+val PagePadding = PaddingValues(horizontal = AppSpacing.page, vertical = AppSpacing.large)
 
 @Composable
 fun StateBanner(loading: String?, error: String?, onDismissError: () -> Unit) {
     if (loading != null) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CircularProgressIndicator()
-            Text(loading)
+        Row(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text(loading, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     if (error != null) {
-        Card(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
-            Column(Modifier.padding(16.dp)) {
-                Text("操作未完成", style = MaterialTheme.typography.titleMedium)
-                Text(error, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = onDismissError) { Text("关闭提示") }
+        Surface(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
+            shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.errorContainer) {
+            Row(Modifier.padding(start = AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
+                AppGlyph(AppIcon.ERROR, modifier = Modifier.size(AppSpacing.icon))
+                Column(Modifier.weight(1f).padding(AppSpacing.medium)) {
+                    Text("操作未完成", style = MaterialTheme.typography.titleSmall)
+                    Text(error, style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = onDismissError) { AppGlyph(AppIcon.CLOSE, "关闭错误提示") }
             }
         }
     }
