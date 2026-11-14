@@ -8,7 +8,12 @@
 app/src/main/
   AndroidManifest.xml          无网络/相册全量读取权限，禁备份
   java/com/audioassistant/
-    MainActivity.kt           空 Compose 启动宿主（非功能页）
+    MainActivity.kt           Compose 启动宿主
+    ui/AudioAssistantApp.kt   共享 Scaffold / NavHost / 模态面板
+    ui/WorkspaceViewModel.kt  Activity 作用域会话 UI 状态
+    ui/navigation/            四一级路由 + 裁剪子路由
+    ui/screens/               首页、视频、工作区、裁剪器、成果库
+    ui/components/            状态、命名/导出/更多编辑面板
     ui/theme/                 Material 3 系统深浅色主题
     model/EditProject.kt      可序列化片段、歌曲、引用、导出设置
     data/RecentProjectRepository.kt  Flow/挂起存取契约，无实现
@@ -16,7 +21,7 @@ app/src/main/
   res/values{,-night}/        中文名称、窗口主题
 ```
 
-阶段 2 增加 ui/navigation 与各功能页、ViewModel。阶段 3 在 data 中实现存储和文件服务；阶段 4 增加 playback/，实现 Media3 控制；阶段 5 才增加 cpp/、NDK 脚本、JNI 与原生许可。不用空目录、假二进制或成功桩宣称完成。
+阶段 2 已增加 ui/navigation、各功能页和共享 ViewModel。阶段 3 在 data 中实现存储和文件服务；阶段 4 增加 playback/，实现 Media3 控制；阶段 5 才增加 cpp/、NDK 脚本、JNI 与原生许可。不用空目录、假二进制或成功桩宣称完成。
 
 ## 固定版本
 
@@ -28,11 +33,11 @@ app/src/main/
 | Kotlin / Compose 编译插件 / Serialization 插件 | 2.1.20 | 三者同版 |
 | compileSdk / targetSdk / minSdk | 36 / 36 / 33 | 已配置 |
 | ABI | arm64-v8a | 已配置，原生尚未接入 |
-| Compose BOM | 2025.04.01 | 管理 UI/Foundation/Material3 版本，不单独混配 |
+| Compose BOM | 2025.04.01 | 管理 UI/Foundation/Material3/Material Icons Core，不单独混配 |
 | Core KTX | 1.16.0 | 已声明 |
 | Activity Compose | 1.10.1 | 已声明 |
 | Lifecycle runtime / runtime-compose / viewmodel-compose | 2.9.0 | 已声明 |
-| Navigation Compose | 2.9.0 | 已声明，未导航接线 |
+| Navigation Compose | 2.9.0 | 已接线；未编译/运行 |
 | Media3 ExoPlayer | 1.7.1 | 已声明，未使用 |
 | Coroutines Android | 1.10.2 | 已声明 |
 | Serialization JSON | 1.8.1 | 已声明，尚无磁盘持久化 |
@@ -42,9 +47,11 @@ app/src/main/
 
 版本表表示源码选择，不代表依赖解析、构建兼容性已验证。版本目录 `gradle/libs.versions.toml` 为依赖配置来源。Wrapper 从旧仓库完整复制的通用构建工具文件；不复用旧产品层代码。旧仓库检查基点 4144c1ccf6a293a3b4f179c7d9ab7aa3c5209d1b。
 
-## 状态和路由（后续实施）
+## 状态和路由（阶段 2 已接线，未运行）
 
-单 Activity；四个一级入口共用模块状态持有者，首页卡片导航同一路由。模块 ViewModel 跨底栏切换保持队列、歌曲和任务；不得每次重建空列表。全屏裁剪为工作区的子流程，隐藏底栏，系统返回先保存后退出；暂不实现后台任务恢复。进程重开仅恢复唯一最近项目，不能承诺恢复转换任务。
+单 Activity；四个一级入口共用模块状态持有者，首页卡片导航同一路由。`WorkspaceViewModel` 在 NavHost 外取得，Activity 作用域管理空队列/歌曲/成果视图契约、成果分类、命名草稿、导出设置和面板状态；当前没有导入/任务数据生产者，不将空状态视作文件保留已验证。设置可在会话内修改，不承诺磁盘或进程死亡恢复。
+
+Navigation Compose 使用同一 Destination、launchSingleTop、popUpTo + saveState/restoreState，保留页面滚动；各一级页面的系统返回回首页，首页由系统处理退出。裁剪器 route 为 `editor?songId={songId}`，隐藏底栏，工具栏与系统返回共用出口，面板返回优先关闭。当前无可编辑数据，返回只退出、不提示“已保存”；阶段 3/4 必须接入真实自动保存再退出。暂不实现后台任务恢复。进程重开仅恢复唯一最近项目，不能承诺恢复转换任务。
 
 ## 片段与时间
 
@@ -75,3 +82,11 @@ loudnorm 按每首歌剪后内容分别分析并处理，分析参数用于处�
 ## 开源许可边界
 
 Wrapper 保留 Apache-2.0 版权头，官方来源 https://github.com/gradle/gradle/tree/v8.11.1/gradle/wrapper ；JAR 校验记录见 LOCAL_VALIDATION。AndroidX/Compose、Kotlin、Coroutines、Serialization 等依赖的许可与通知在实际分发前按固定版本核对。阶段 1 未纳入任何 FFmpeg/LAME 源码或二进制，不以旧库许可替代未来实际配置的许可；阶段 5 必须随源码版本、编译选项记录 FFmpeg/LAME 及传递原生依赖的完整许可、源码提供与重链接义务，避免未经核实引入 GPL/nonfree 选项。当前没有可发布音频引擎。
+
+## 阶段 2 UI 与未接线边界
+
+首页卡片先进入模块，导入按钮弹暂不可用说明。工作区从成果库入口复用唯一成果库路由；空状态允许“查看裁剪器”，不创建虚构歌曲。列表使用 LazyColumn；视频/工作区关键操作固定底部；裁剪主控只有常用播放/跳转/标记按钮和删除，精确时间与其他编辑分组放入面板。
+
+转换名与导出名输入不自动包含扩展名；响度均衡默认为开，修改仅影响会话设置。转换和导出提交按钮禁用，编辑/排序操作禁用；目前不存在真实结果/任务。加载/错误横幅、结果卡片菜单、成功面板均提供可组合 UI，成功面板只有 completedResult 非空才显示，当前没有写入该状态的生产者。不得为了预览而手动写入成功。
+
+主 Scaffold 使用系统 Insets，并消费内容 padding；Bottom Sheet 使用 Material3 模态返回/遮罩和默认窗口 Insets。布局、小屏、键盘、TalkBack 及预测返回仍需用户本地验证。没有截图或运行证据。

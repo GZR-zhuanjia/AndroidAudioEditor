@@ -20,6 +20,7 @@ androidx-navigation-compose = { module = "androidx.navigation:navigation-compose
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-icons = { module = "androidx.compose.material:material-icons-core" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-tooling = { module = "androidx.compose.ui:ui-tooling" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }

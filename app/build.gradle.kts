@@ -37,6 +37,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
+    implementation(libs.compose.icons)
     debugImplementation(libs.compose.tooling)
     implementation(libs.media3.exoplayer)
     implementation(libs.kotlinx.coroutines.android)
