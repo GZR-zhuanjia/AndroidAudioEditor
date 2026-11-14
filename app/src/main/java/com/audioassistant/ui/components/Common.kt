@@ -34,7 +34,7 @@ fun formatSize(bytes: Long?): String = when {
     else -> "$bytes 字节"
 }
 
-val PagePadding = PaddingValues(horizontal = AppSpacing.page, vertical = AppSpacing.large)
+val PagePadding = PaddingValues(horizontal = AppSpacing.page, vertical = AppSpacing.medium)
 
 @Composable
 fun StateBanner(loading: String?, error: String?, onDismissError: () -> Unit) {

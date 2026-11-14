@@ -1,15 +1,19 @@
 package com.audioassistant.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -19,7 +23,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.audioassistant.ui.ResultItemUi
 import com.audioassistant.ui.WorkspaceUiState
 import com.audioassistant.ui.theme.AppSpacing
@@ -81,23 +89,51 @@ private fun SummaryRow(label: String, value: String, icon: AppIcon) {
 
 @Composable
 fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, onClose: () -> Unit) {
-    Column {
-        SheetHeader(if (state.videos.size > 1) "批量转换命名" else "转换设置与命名", AppIcon.VIDEO, onClose)
-        Column(Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.small)) { NoteRow("输出 MP3 · 文件名无需输入扩展名", AppIcon.AUDIO) }
-        LazyColumn(Modifier.weight(1f, fill = false), contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-            if (state.videos.isEmpty()) item { EmptyState("还没有视频", "请先添加需要转换的视频。", icon = AppIcon.VIDEO, tone = FeatureTone.BLUE) }
-            items(state.videos, key = { it.id }) { video ->
-                val name = state.videoNames[video.id].orEmpty()
-                OutlinedTextField(value = name, onValueChange = { onName(video.id, it) }, label = { Text(video.name) },
-                    leadingIcon = { AppGlyph(AppIcon.EDIT) }, supportingText = { Text("文件名（不含扩展名）") },
-                    shape = MaterialTheme.shapes.medium, singleLine = true, isError = name.isBlank(), modifier = Modifier.fillMaxWidth())
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // 仅批量列表设高度上限；单文件由一个输入框的实际高度决定，不要求展开到屏幕比例。
+        val batchMaxHeight = (maxHeight * 0.55f).coerceAtMost(360.dp)
+        Column {
+            SheetHeader("转换设置与命名", AppIcon.VIDEO, onClose)
+            Text("输出格式：MP3", Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.xSmall),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.videos.size <= 1) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = AppSpacing.page, vertical = AppSpacing.small)) {
+                    val video = state.videos.singleOrNull()
+                    if (video == null) Text("请先添加需要转换的视频。", style = MaterialTheme.typography.bodyMedium)
+                    else ConversionNameField(state.videoNames[video.id].orEmpty(), { onName(video.id, it) })
+                }
+            } else {
+                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = batchMaxHeight),
+                    contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+                    itemsIndexed(state.videos, key = { _, video -> video.id }) { index, video ->
+                        Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+                            Text("${index + 1}. ${video.name}", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            ConversionNameField(state.videoNames[video.id].orEmpty(), { onName(video.id, it) })
+                        }
+                    }
+                }
+            }
+            Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.medium),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+                Text("转换功能暂未开放", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PrimaryActionButton("开始转换", AppIcon.VIDEO, {}, Modifier.fillMaxWidth(), false)
             }
         }
-        ActionDock {
-            NoteRow("转换功能暂未开放，不会生成成果记录")
-            PrimaryActionButton("开始转换", AppIcon.VIDEO, {}, Modifier.fillMaxWidth(), false)
-        }
     }
+}
+
+@Composable
+private fun ConversionNameField(name: String, onName: (String) -> Unit) {
+    val focus = LocalFocusManager.current
+    OutlinedTextField(
+        value = name, onValueChange = onName, label = { Text("文件名（不含扩展名）") },
+        shape = MaterialTheme.shapes.medium, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        isError = name.isBlank(),
+        supportingText = if (name.isBlank()) { { Text("请输入文件名") } } else null,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+    )
 }
 
 /** 仍仅供真实成果事件调用，不创建成功状态或模拟文件。 */

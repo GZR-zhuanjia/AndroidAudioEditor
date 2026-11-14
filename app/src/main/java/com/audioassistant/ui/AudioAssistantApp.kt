@@ -91,6 +91,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: Destination.HOME.route
     val inEditor = route == EDITOR_ROUTE
+    val editorSong = if (inEditor) state.songs.firstOrNull { it.id == entry?.arguments?.getString("songId") } else null
     val current = Destination.entries.firstOrNull { it.route == route } ?: Destination.HOME
 
     fun navigateTo(destination: Destination) {
@@ -113,7 +114,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
             else TopAppBar(
                 title = {
                     Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                        if (!inEditor) AppGlyph(current.icon, tint = MaterialTheme.colorScheme.primary)
+                        if (!inEditor) AppGlyph(current.icon, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(if (inEditor) "单曲裁剪" else current.title, style = MaterialTheme.typography.headlineSmall)
                     }
                 },
@@ -122,7 +123,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     if (inEditor) IconButton(onClick = { exitEditor() }) { AppGlyph(AppIcon.BACK, "返回歌曲列表") }
                 },
                 actions = {
-                    if (inEditor) TextAction("更多编辑", AppIcon.TUNE, { workspace.showSheet(AppSheet.MORE_EDIT) })
+                    if (inEditor && editorSong != null && editorSong.error == null) TextAction("更多编辑", AppIcon.TUNE, { workspace.showSheet(AppSheet.MORE_EDIT) })
                 },
             )
         },
@@ -182,7 +183,8 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     )
                 }
                 composable(Destination.LIBRARY.route) {
-                    LibraryScreen(state.results, state.category, workspace::selectCategory) { resultId, action ->
+                    LibraryScreen(state.results, state.category, workspace::selectCategory, onMakeAudio = { navigateTo(Destination.HOME) },
+                        isLoading = !state.ready && state.loadingMessage != null) { resultId, action ->
                         if (action == "添加到拼接") {
                             if (state.ready && !state.isWorking) workspace.addResultToProject(resultId)
                             else workspace.reportError("正在读取或保存项目，请稍后再试。")
@@ -191,7 +193,12 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                 }
                 composable(EDITOR_ROUTE, arguments = listOf(navArgument("songId") { type = NavType.StringType; defaultValue = "" })) { editorEntry ->
                     val songId = editorEntry.arguments?.getString("songId")
-                    EditorScreen(state.songs.firstOrNull { it.id == songId })
+                    EditorScreen(
+                        song = state.songs.firstOrNull { it.id == songId }, onBack = { exitEditor() },
+                        onAdjustTime = { workspace.showSheet(AppSheet.MORE_EDIT) },
+                        onAction = { workspace.unavailable(it.label) },
+                        isLoading = !state.ready && state.loadingMessage != null,
+                    )
                 }
             }
         }

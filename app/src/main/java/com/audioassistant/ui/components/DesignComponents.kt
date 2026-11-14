@@ -88,13 +88,18 @@ fun EmptyState(
     title: String, description: String, modifier: Modifier = Modifier, icon: AppIcon = AppIcon.AUDIO,
     tone: FeatureTone = FeatureTone.PURPLE, actions: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
-    Column(modifier.fillMaxWidth().padding(vertical = AppSpacing.section),
+    Column(modifier.fillMaxWidth().padding(vertical = AppSpacing.large),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-        IconBadge(icon, tone, 64.dp)
+        AppGlyph(icon, modifier = Modifier.size(40.dp), tint = if (icon == AppIcon.ERROR) MaterialTheme.colorScheme.error else when (tone) {
+            FeatureTone.PURPLE -> MaterialTheme.colorScheme.primary
+            FeatureTone.BLUE -> MaterialTheme.colorScheme.secondary
+            FeatureTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+        })
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         Text(description, modifier = Modifier.widthIn(max = 420.dp), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         if (actions != null) Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(AppSpacing.medium), content = actions)
     }
 }
@@ -102,10 +107,10 @@ fun EmptyState(
 @Composable
 fun PrimaryActionButton(text: String, icon: AppIcon, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(onClick, modifier.heightIn(min = AppSpacing.touch), enabled = enabled, shape = MaterialTheme.shapes.medium,
-        contentPadding = PaddingValues(horizontal = AppSpacing.large, vertical = AppSpacing.medium),
+        contentPadding = PaddingValues(horizontal = AppSpacing.large, vertical = AppSpacing.small),
         colors = ButtonDefaults.buttonColors(
-            disabledContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
         )) {
         AppGlyph(icon, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(AppSpacing.small))
@@ -116,8 +121,8 @@ fun PrimaryActionButton(text: String, icon: AppIcon, onClick: () -> Unit, modifi
 @Composable
 fun SecondaryActionButton(text: String, icon: AppIcon, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     OutlinedButton(onClick, modifier.heightIn(min = AppSpacing.touch), enabled = enabled,
-        shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        contentPadding = PaddingValues(horizontal = AppSpacing.medium, vertical = AppSpacing.medium),
+        shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (enabled) 1f else 0.4f)),
+        contentPadding = PaddingValues(horizontal = AppSpacing.medium, vertical = AppSpacing.small),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
         AppGlyph(icon, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(AppSpacing.small))
@@ -156,10 +161,10 @@ fun NoteRow(text: String, icon: AppIcon = AppIcon.INFO) {
 
 @Composable
 fun SheetHeader(title: String, icon: AppIcon, onClose: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
-        horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
-        IconBadge(icon, size = 40.dp)
-        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+    Row(Modifier.fillMaxWidth().padding(start = AppSpacing.page, end = AppSpacing.small),
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+        AppGlyph(icon, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         IconButton(onClick = onClose) { AppGlyph(AppIcon.CLOSE, "关闭面板") }
     }
 }
