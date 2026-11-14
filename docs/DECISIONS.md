@@ -71,3 +71,16 @@
 6. 动画采用短淡化150/100ms、底栏130ms颜色过渡，固定图标几何；沿用自绘路径缓存/预热ImageVector。参考官方文档，不照搬Navigation3/新版本API，不无证据承诺帧率修复。
 7. 应用源码版本0.2.0/code2；schema1新增默认字段可读旧项目，旧APK读新文件不保证兼容。
 8. 继续禁云端任何编译/测试/模拟器，不写假通过报告；最多一次diff --check，完成提交推送后等待阶段5指示。
+
+## 阶段5：真实原生基础与波形
+
+1. 固定FFmpeg7.1.5/n7.1.5真实peeled提交，LAME3.100原包SHA-256与大小，NDK r28c28.2.13676358、CMake3.22.1。保持既有Kotlin/Compose/Media3版本；应用0.3.0/code3。
+2. 第三方源码通过锁定脚本本地获取，不提交大源码树、预编译库或假.so；原生编译只在用户本地。默认启用CMake、缺真实依赖失败；nativeAudioEnabled=false只供UI，波形报真实不可用。
+3. 采用动态库，禁GPL/version3/nonfree与外部自动探测；LAME生成libtool改无版本SONAME，不改音频算法。记录完整许可与源码/配置/重链接分发义务，不声称仅动态链接/上游链接就自动满足。
+4. JNI直接读取授权fd+offset+length，避免额外整源复制。只读probe/波形，不重写导入元数据、源文件/项目/成果生命周期。串行worker+atomic取消+IO中断轮询；不建立后台恢复系统。
+5. 波形保留真实PCM原采样率/所有声道，不混单声道抵消或低采样率丢高频。约20ms峰值/采样加权RMS、4倍层级、最长8小时/32声道/384kHz；不用随机线/假音量变化。细于基础bin的视图不代表更高分析精度。
+6. 缓存只放cacheDir，128MiB LRU、严格格式边界；未知mtime的provider重分析，键不做全文件哈希。取消/失败清临时文件，缓存可再生，不损坏项目。
+7. 波形Flow与播放时钟分离，视口后台计算；按保留片段投影，删剪不重新解码。全曲统一显示倍率并标注，静音为0；普通预览/波形不冒充响度处理或最终MP3。
+8. 全部原生链接显式16KB对齐、提供ELF检查脚本；16KB兼容结论必须有APK/设备证据。本阶段不运行任何编译/测试/脚本，唯一diff --check后提交推送并停止，不进入阶段6。
+
+来源：FFmpeg远端标签及源码configure；https://deb.debian.org/debian/pool/main/l/lame/lame_3.100-6.dsc；https://developer.android.com/guide/practices/page-sizes；https://github.com/android/ndk/wiki/Changelog-r28 。

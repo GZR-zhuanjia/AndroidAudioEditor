@@ -1,6 +1,6 @@
 # 架构与工具版本
 
-## 当前源码结构（阶段4）
+## 当前源码结构（阶段5）
 
 单个 `:app`，不引入多模块或 DI 框架，依赖方向 UI → ViewModel → Repository / Service → Native Audio Engine。
 
@@ -22,10 +22,16 @@ app/src/main/java/com/audioassistant/
   ui/screens/                      五类中文页面
   ui/components/                   面板、状态、拖动排序状态
   ui/theme/                        系统深浅色 Material 3
-  engine/NativeAudioEngine.kt       仍为无实现能力契约
+  engine/NativeAudioEngine.kt       JNI探测/分析，串行worker与取消桥
+  waveform/                        多级数据读取、缓存、独立会话Flow
+  ui/components/WaveformPanel.kt    编辑/原曲投影、Canvas、缩放平移定位
+app/src/main/cpp/                   JNI C++ / CMake真实库链接
+native/                            源码版本锁与构建/协议说明
+scripts/                           用户本地获取源码、交叉编译、ELF检查
+app/src/main/assets/licenses/       完整原生许可与分发说明
 ```
 
-阶段4已接入播放/编辑源码；阶段5才增加 cpp/、NDK脚本、JNI与许可；阶段 6 才建立真实转换任务。所有已完成项仅表示源码已写，未构建/运行。
+阶段5增加真实探测和波形，阶段4播放/编辑不变。阶段6才建立转换/导出任务与loudnorm调用。所有已完成项只表示源码已写，未构建/运行；第三方完整源码由锁定脚本在本地取得，不在Git提交大源码树或.so。
 
 ## 固定版本
 
@@ -36,7 +42,7 @@ app/src/main/java/com/audioassistant/
 | JDK / JVM 目标 | 17 | 用户本地要求，云端未验证工具链 |
 | Kotlin / Compose 编译插件 / Serialization 插件 | 2.1.20 | 三者同版 |
 | compileSdk / targetSdk / minSdk | 36 / 36 / 33 | 已配置 |
-| ABI | arm64-v8a | 已配置，原生尚未接入 |
+| ABI | arm64-v8a | 原生脚本与CMake只支持此ABI |
 | Compose BOM | 2025.04.01 | 管理 UI/Foundation/Material3/Material Icons Core，不单独混配 |
 | Core KTX | 1.16.0 | 已声明 |
 | Activity Compose | 1.10.1 | 已声明 |
@@ -46,8 +52,9 @@ app/src/main/java/com/audioassistant/
 | Coroutines Android | 1.10.2 | 已声明 |
 | Serialization JSON | 1.8.1 | 已接入 JSON 原子持久化，未编译/运行 |
 | Android Studio | 支持 AGP 8.10 的 Meerkat Feature Drop 2024.3.2 或兼容更新稳定版 | 本地选用，未验证 |
-| NDK / CMake | 阶段 5 冻结；优先评估 NDK r28+ | 当前不安装、不配置 externalNativeBuild |
-| FFmpeg / LAME | 阶段 5 冻结具体源码版本和校验值 | 当前未引入 |
+| NDK / CMake | r28c 28.2.13676358 / 3.22.1 | 已配置externalNativeBuild，未安装/执行 |
+| FFmpeg | 7.1.5 / n7.1.5 / 3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587 | 已核对远端标签与peeled提交 |
+| LAME | 3.100 | 原包SHA-256 ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e；已核对Debian源包校验表 |
 
 版本表表示源码选择，不代表依赖解析、构建兼容性已验证。版本目录 `gradle/libs.versions.toml` 为依赖配置来源。Wrapper 从旧仓库完整复制的通用构建工具文件；不复用旧产品层代码。旧仓库检查基点 4144c1ccf6a293a3b4f179c7d9ab7aa3c5209d1b。
 
@@ -83,21 +90,27 @@ ViewModel 的 Channel 串行处理导入、移除、排序和设置；Repository
 
 路径必须是规范相对路径，且 canonicalFile 父目录仅 sources/ 或 results/；不接受绝对路径、../ 或规范化后不同的别名。isReferenced 同时检查项目和成果。移除歌曲先提交引用释放，再清理；成果若仍在索引中保留实体。外部原曲和另存副本从不删除。读取损坏项目时禁止清理，避免误删有效来源。
 
-启动成功加载后，只扫描本应用 sources/ 中 UUID 命名的 .part/.source，删除不再被项目/成果引用的文件，不扫描 results/ 或未知目录。原生任务临时文件和活动任务引用尚不存在，阶段 6 必须接入任务引用后才能扩展清理；阶段 7 完善成果删除和全生命周期。
+启动成功加载后，只扫描本应用sources/中UUID命名的.part/.source，删除不再被项目/成果引用的文件，不扫描results/或未知目录。阶段5只读分析持有独立fd，退出编辑取消；已打开文件即使释放目录引用，其fd也在原生退出后关闭，不改源文件。阶段6导出仍必须加入活动引用保护，不能直接扩大来源清理；阶段7完善成果全生命周期。
 
 移除/失败时尽量释放本次持久读授权；若视频会话还用到同一 URI 则保守保留。进程在获取授权但未登记前突然结束，或保护视频后退出时，可能保留无文件实体的读授权；不以全量撤销 provider 权限冒险破坏有效引用，阶段 7 再完善授权账本。内部未登记副本会在下一次有效加载后回收。
 
 ## 后续引擎与兼容性
 
-导入仍使用 MediaExtractor 读取真实轨道类型/时长，必要时 MediaMetadataRetriever 补充时长，OpenableColumns 读名称/大小；不支持的媒体明确拒绝或视频显示未知时长。不是假探测，也不替代阶段 5 的 FFmpeg 格式覆盖。真实播放器已在阶段4接入；波形与原生探测/转换尚未接入。
+导入沿用MediaExtractor/MediaMetadataRetriever/OpenableColumns，没有重写导入/持久化。阶段5在裁剪器接FFmpeg probe与真实波形；转换仍未接入。播放器支持而精简引擎不支持的格式可继续按钮编辑，波形单独报错。
 
-后续服务负责 URI 适配、进度/取消、临时文件验证提交，UI 不直接拼 FFmpeg 命令。loudnorm 按每曲剪后内容独立分析处理，再按顺序拼接；Media3 预览遵循片段，受格式和编码延迟影响。不得以普通试听冒充最终响度或编码结果。
+JniNativeAudioEngine读取授权AssetFileDescriptor，JNI自定义AVIO处理偏移和长度，probe返回真实最佳音轨。串行worker处理FFmpeg，取消回调直接设置native atomic；interrupt、读取/解码/写缓存循环检查，退出释放资源。阻塞provider的pread仍受系统调用约束；pipe可轮询取消，但需要seek的容器可能不支持。
 
-16 KB 仍仅有未压缩原生库打包配置；阶段 5 固定支持 16 KB 的 NDK/全部原生依赖，检查 ELF/包对齐并由用户本地验证，当前无 .so 或兼容性结论。
+WaveformRepository只写cacheDir/waveforms-v1，不复制原曲/登记成果。保留原采样率和声道转float，约20ms峰值/按实际采样数加权RMS，4倍父级；AAWAVE01有界读取，最长8小时/32声道/384kHz。128MiB LRU；有效mtime/size/URI才跨会话复用，无可靠mtime重分析。取消/失败清本次.part，超过24小时崩溃残留在后续load回收，不触碰项目。
+
+WaveformSession独立Flow、代次隔离旧任务；删剪只更新片段映射，不重新解码原曲。视口包络在Default线程计算，播放tick只更新播放线；全曲统一标明显示倍率，静音为0。基础bin约20ms，边界仍受此粒度限制。完整协议见native/README.md。
+
+后续转换服务负责输出验证提交，UI不拼FFmpeg命令。loudnorm按每曲剪后内容独立分析处理，再顺序拼接。Media3与FFmpeg的PTS/编码延迟处理可能不同，不得以普通试听或波形冒充最终响度或编码结果。
+
+NDK r28c、AGP8.10.1未压缩JNI打包，FFmpeg/LAME/JNI显式max/common-page-size=16384。scripts/inspect-native.py用于本地读ELF架构/LOAD/SONAME/NEEDED；还须检查APK中所有.so（含libc++_shared）、zipalign及16KB设备。当前无.so或兼容性结论。
 
 ## 开源许可
 
-Wrapper 保留 Apache-2.0 版权头，JAR 与 Gradle 官方 v8.11.1 对照记录见 LOCAL_VALIDATION。AndroidX/Compose、Kotlin 等分发前按固定版本核对许可。尚未纳入 FFmpeg/LAME，阶段 5 必须随精简配置记录完整许可、传递依赖、源码提供/重链接义务，不未经核实启用 GPL/nonfree。
+Wrapper保留Apache-2.0版权头。FFmpeg总体LGPL2.1+，LAME库LGPL2+；配置禁GPL/version3/nonfree/外部自动探测，动态链接。assets/licenses含完整LGPL2/LGPL2.1/GPL2配套文本、FFmpeg许可说明和对应源码/重链接义务。LAME生成libtool仅改SONAME版本策略；本地脚本保留实际config.mak/锁/许可，分发前须准备完整对应源码、构建材料和NDK NOTICE，不能只给上游链接。AndroidX/Compose/Kotlin等其余依赖仍按固定版本核对许可。
 
 ## UI 专项设计系统（阶段 3 后，不推进业务）
 
@@ -109,7 +122,7 @@ Wrapper 保留 Apache-2.0 版权头，JAR 与 Gradle 官方 v8.11.1 对照记录
 
 首页标识在顶栏，两功能卡为核心，真实最近记录用简洁卡；空视频页不显示醒目转换按钮，有队列才显示固定命名区。歌曲选中只控制本地可展开操作，不改变业务状态；拖柄坐标随新卡片容器与垂直对齐计算，排序算法、提交/取消接口保持原样。成果分类与导入工具栏固定，列表独立滚动。
 
-裁剪器现按第二轮 UI 状态分支呈现（见下文）；无歌曲不构建工作台，选中后信息区与固定主控分离；矮屏横向分区，音频行为仍未接入。导出/命名/精调/成功面板统一标题和关闭入口、可滚动内容；导出/转换确认区固定。
+裁剪器按第二轮UI状态分支呈现（见下文）；无歌曲不构建工作台，信息区与固定主控分离；矮屏横向分区。音频行为在阶段4接入、波形在阶段5接入；下文UI专项为当时记录。导出/命名/精调/成功面板统一标题/关闭、可滚动内容；导出/转换确认区固定。
 
 前两轮曾将Navigation Compose四项过渡置None；阶段4已按用户新反馈改为短淡化，以下段落的旧选择由阶段4末节覆盖。未增加内容尺寸、卡片弹簧、入场或排序过渡动画；原排序帧滚动是功能性滚动，保留。Material 标准 ripple/指示/面板反馈不以内部API强改。
 
@@ -155,4 +168,4 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 - https://developer.android.com/media/media3/exoplayer/playlists
 - https://github.com/androidx/media/blob/1.7.1/libraries/common/src/main/java/androidx/media3/common/MediaItem.java （核对微秒裁剪API）
 
-源码应用版本0.2.0/versionCode2，其余工具版本不变。
+阶段4应用版本0.2.0/versionCode2；阶段5为0.3.0/versionCode3，Kotlin/Compose/Media3等既有依赖不变。

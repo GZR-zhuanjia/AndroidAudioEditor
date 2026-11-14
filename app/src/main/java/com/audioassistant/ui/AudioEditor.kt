@@ -19,6 +19,7 @@ import com.audioassistant.ui.screens.EditorPresentation
 import com.audioassistant.ui.screens.EditorStage
 import com.audioassistant.ui.screens.KeptPartUi
 import com.audioassistant.ui.screens.WorkspacePreviewUi
+import com.audioassistant.waveform.WaveformSession
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +42,7 @@ class AudioEditor(
     private val scope: CoroutineScope, private val onProjectCommitted: () -> Unit,
 ) {
     private val preview = AudioPreview(context)
+    val waveform = WaveformSession(context, scope)
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(EditorPresentation())
     val state = mutableState.asStateFlow()
@@ -92,6 +94,7 @@ class AudioEditor(
     fun open(id: String) {
         if (requestedSongId == id && (song != null || busy)) return
         requestedSongId = id
+        waveform.clear()
         val token = ++epoch
         scope.launch {
             mutex.withLock {
@@ -103,6 +106,7 @@ class AudioEditor(
                     uris = resolveUris(setOf(selected.sourceId))
                     song = selected
                     originalDurationUs = project.sources.first { it.id == selected.sourceId }.originalDurationUs
+                    waveform.open(id, uris.getValue(selected.sourceId), selected.segments)
                     stage = EditorStage.Ready
                     edited(selected.resumePositionUs)
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -216,6 +220,7 @@ class AudioEditor(
                         snapshot.copy(project = snapshot.project.copy(songs = snapshot.project.songs.map { if (it.id == next.id) next else it }))
                     }
                     song = next; stage = nextStage
+                    waveform.updateParts(next.segments)
                     onProjectCommitted()
                     edited(next.resumePositionUs) // 删除/恢复/撤销后保持暂停。
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -279,7 +284,7 @@ class AudioEditor(
         closing = true; preview.pause(); publish(); ++epoch
         scope.launch { mutex.withLock {
             busy = true; publish()
-            try { saveCursor(); song = null; requestedSongId = null; stage = EditorStage.Ready; localError = null; preview.clear(); onClosed() }
+            try { saveCursor(); waveform.clear(); song = null; requestedSongId = null; stage = EditorStage.Ready; localError = null; preview.clear(); onClosed() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { localError = "返回前保存失败：${error.message ?: "文件读写失败"}" }
             finally { busy = false; closing = false; publish() }
@@ -315,5 +320,5 @@ class AudioEditor(
             finally { busy = false; publish() }
         } }
     }
-    fun release() { preview.release() }
+    fun release() { waveform.release(); preview.release() }
 }

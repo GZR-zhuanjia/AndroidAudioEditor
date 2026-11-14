@@ -34,13 +34,17 @@ import com.audioassistant.ui.components.SecondaryActionButton
 import com.audioassistant.ui.components.SectionHeader
 import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.formatTime
+import com.audioassistant.ui.components.WaveformPanel
 import com.audioassistant.ui.theme.AppSpacing
+import com.audioassistant.waveform.WaveformState
 import java.util.Locale
 
 @Composable
 fun EditorScreen(
     song: SongItemUi?, onBack: () -> Unit, onAdjustTime: () -> Unit,
     onAction: (EditorAction) -> Unit, presentation: EditorPresentation = EditorPresentation(), isLoading: Boolean = false,
+    waveform: WaveformState = WaveformState(), onWaveformRetry: () -> Unit = {},
+    onWaveformCancel: () -> Unit = {}, onWaveformSeek: (Long) -> Unit = {},
 ) {
     // 项目初始化由外层真实加载横幅反馈，不提前宣称没有歌曲。
     if (isLoading) return
@@ -62,12 +66,12 @@ fun EditorScreen(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth > maxHeight && maxHeight < 440.dp) {
             Row {
-                EditorInformation(song, presentation, onAdjustTime, onAction, Modifier.weight(1f))
+                EditorInformation(song, presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, Modifier.weight(1f))
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { EditorControls(presentation, onAction) }
             }
         } else {
             Column {
-                EditorInformation(song, presentation, onAdjustTime, onAction, Modifier.weight(1f))
+                EditorInformation(song, presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, Modifier.weight(1f))
                 // 选区/接缝反馈仅改变信息区，主控区域不增减行、不因阶段跳动。
                 EditorControls(presentation, onAction)
             }
@@ -78,7 +82,8 @@ fun EditorScreen(
 @Composable
 private fun EditorInformation(
     song: SongItemUi, state: EditorPresentation, onAdjustTime: () -> Unit,
-    onAction: (EditorAction) -> Unit, modifier: Modifier,
+    onAction: (EditorAction) -> Unit, waveform: WaveformState, onWaveformRetry: () -> Unit,
+    onWaveformCancel: () -> Unit, onWaveformSeek: (Long) -> Unit, modifier: Modifier,
 ) {
     LazyColumn(modifier, contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
         item {
@@ -98,8 +103,7 @@ private fun EditorInformation(
             }
         }
         item {
-            // 当前没有真实波形生产者。只给一条提示，不能用示例线条填满工作台。
-            NoteRow("波形分析暂未接入", AppIcon.WAVE)
+            WaveformPanel(waveform, state, onWaveformSeek, onWaveformRetry, onWaveformCancel)
         }
         item {
             when (val stage = state.stage) {

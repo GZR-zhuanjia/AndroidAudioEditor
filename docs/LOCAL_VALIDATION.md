@@ -8,11 +8,11 @@
 
 1. 克隆本仓库，Android Studio 打开项目根目录；使用支持 AGP 8.10 的稳定版（Meerkat Feature Drop 2024.3.2 或兼容更新版本），Gradle JDK 17。
 2. 本地安装 Android SDK Platform 36，使用项目 Wrapper 8.11.1；Android Studio 配置本机 SDK 路径，local.properties 不提交。首次同步需要用户本地网络下载依赖，应用运行本身无网络需求。
-3. 用 Android Studio Sync 后 Build APK；也可用户本地执行 `./gradlew :app:assembleDebug`（Windows 为 `gradlew.bat :app:assembleDebug`）。此命令未由云端执行。
-4. 当前无需 NDK/CMake，无 FFmpeg 或任何 .so；阶段 5 后更新原生构建步骤。
+3. 阶段5起需在本地准备NDK28.2.13676358/r28c和CMake3.22.1，先按下文/`native/README.md`构建真实FFmpeg/LAME，再Android Studio Sync/Build APK；也可用户本地执行 `./gradlew :app:assembleDebug`（Windows为gradlew.bat）。云端未执行。
+4. 只检查UI且未准备原生依赖时，可用户本地用 `./gradlew -PnativeAudioEnabled=false :app:assembleDebug`；波形会诚实报库不可用，不能当作JNI/波形验收。默认启用原生，缺库CMake明确报错。
 5. 将完整首个错误及相关文件行号反馈，按具体错误修复，不展开无关测试。不要上传签名密钥或凭据。
 
-阶段 3 已接真实导入/排序/持久化源码，音频处理仍未开放；下面阶段 2 记录为当时版本说明，当前应按阶段 3 场景检查。API 36 边到边与窗口 Insets 仍待实际设备检查。若同包名旧应用已装，先保护原数据；当前新项目不含旧数据迁移或版本更新保证。
+当前阶段5源码含真实Media3编辑和FFmpeg波形，转换/导出仍未开放；下方旧阶段记录是当时版本说明，当前以阶段4/5场景为准。API36 Insets仍待设备检查。若同包名旧应用已装先保护数据，新项目不含旧工程迁移保证。
 
 ## 后续关键场景（尚未执行）
 
@@ -133,3 +133,37 @@
 | 2026-11-14 | Codex云端 | 片段/映射/历史/引用/播放器与UI静态审阅 | 已进行，不代表运行通过 |
 | 2026-11-14 | Codex云端 | 阶段4唯一git diff --check | 退出码0，无空白错误；未重复执行 |
 | — | 用户本地 | 本阶段构建、编辑试听、持久化和动画性能 | 尚无结果 |
+
+## 阶段5：本地构建步骤（云端未执行）
+
+源码版本0.3.0/code3。用户在本地Linux x86_64/macOS准备Bash、Python3、Git、Make、pkg-config、宿主C编译器及上述Android工具；路径避免空格。Windows原生依赖可在Linux/WSL构建，再将`.native/prefix/arm64-v8a`交给Android Studio；不是用主机.so冒充Android库。
+
+```bash
+# 仅用户本地；替换为真实安装路径，不要修改 HOME/CODEX_HOME。
+export ANDROID_NDK_HOME=/absolute/path/to/ndk/28.2.13676358
+bash scripts/build-native.sh
+./gradlew :app:assembleDebug
+```
+
+脚本从锁定提交/原包校验取得完整真实源码，编译6个动态依赖并读取ELF信息，输出在Git忽略的.native/。JNI由CMake编译，APK应含audioengine、avformat、avcodec、avutil、swresample、avfilter、mp3lame及libc++_shared。上游构建脚本/host要求、精简清单、协议与许可见`native/README.md`。不能用关闭native或空文件绕过错误后声称原生构建成功。
+
+本地还需将NDK LLVM bin加入PATH，用`python3 scripts/inspect-native.py <解压APK后的lib/arm64-v8a>`检查包括JNI和C++ runtime在内所有.so；Android SDK build-tools提供的`zipalign -c -P 16 -v 4 <APK路径>`检查包对齐，并在16KB arm64设备验证。脚本只检查已声明项目，不代替动态链接/设备或完整许可证审计。
+
+建议关键场景（全部未由云端执行）：
+
+1. 默认原生构建和可选纯UI构建分别如实可用/不可用；缺.so、错误ABI或权限失效必须报错，不画假波形。先反馈第一个完整编译/链接错误，不反复无关重构。
+2. 真实MP3/VBR、AAC/MP4、WAV16/24/float、FLAC、Ogg/Opus等列表内格式；probe的codec/rate/channel/duration与实际媒体核对。播放器能播但精简FFmpeg不支持的格式只波形报错。
+3. 静音、低电平、脉冲、大动态、相位相反双声道、较高频率音频；静音不出现伪振幅，peak/RMS与真实信号一致，统一倍率明确。PCM不降采样、不混单声道；不把波形当响度均衡结果。
+4. 缩放/平移/点按定位、小屏/横屏/大字/深浅色；高倍仍受约20ms基础bin限制，精确时间继续通过按钮/数字输入。检查首尾、PTS不连续、MP3 priming与Media3定位偏差。
+5. 原曲/编辑切换，多个不连续删除、跨段删除、仅保留/分割/撤销/重做/恢复后波形按保留片段合拢，接缝时间与试听一致；不重写源文件。
+6. 分析中播放和编辑不阻塞UI；取消、快速返回/换曲/重开/重复重试，无旧任务发布到新歌曲。未知总长不定进度，失败无缓存/成果假成功。provider阻塞pread的取消延迟记录真实情况。
+7. cacheDir重复加载、损坏缓存重建、provider无mtime重分析、源权限失效、空间不足、缓存被系统删除；项目JSON和来源副本不受影响。检查本次取消.part清理、旧崩溃.part在24小时后下一次load清理、128MiB LRU与长音频资源占用；上限8小时/32声道/384kHz。
+8. 所有原生库的ELF LOAD与APK ZIP对齐、16KB arm64系统实际加载运行；4KB arm64也要正常。不以链接标志或NDK版本代替完整兼容性结论。
+9. 转换/拼接导出/loudnorm仍禁用；本阶段只编入相关编码器/滤镜，未调用处理，不生成任何成果。发布前准备完整对应第三方源码、许可证、实际配置与重链接材料及NDK NOTICE。
+
+| 日期 | 执行方 | 内容 | 结果 |
+| --- | --- | --- | --- |
+| 2026-11-14 | Codex云端 | 远端FFmpeg n7.1.5标签/peeled提交、LAME Debian源包.dsc校验表、上游configure与许可文本查阅 | 已查阅小型文本，未下载/运行完整原生源码获取或构建脚本 |
+| 2026-11-14 | Codex云端 | JNI签名、资源所有权、取消/缓存/波形映射/构建配置静态审阅 | 已进行，不能证明可编译/运行 |
+| 2026-11-14 | Codex云端 | 阶段5唯一git diff --check | 退出码2：上游LAME许可第5行空格/Tab混合缩进；随后仅规范其空白，未重复检查 |
+| — | 用户本地 | FFmpeg/LAME/JNI/Android构建、ELF/APK/16KB设备与真实波形 | 尚无结果 |

@@ -8,13 +8,17 @@ plugins {
 android {
     namespace = "com.audioassistant"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
     defaultConfig {
         applicationId = "com.audioassistant"
         minSdk = 33
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild {
+            cmake { arguments += "-DANDROID_STL=c++_shared" }
+        }
     }
     buildFeatures { compose = true }
     compileOptions {
@@ -23,7 +27,13 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     packaging { jniLibs.useLegacyPackaging = false }
-    // 阶段 5 再接入 externalNativeBuild；当前不加载任何原生库。
+    sourceSets.getByName("main").assets.srcDir(rootProject.file(".native/runtime-notices"))
+    // false 仅供无原生依赖时检查 UI；波形会如实提示库不可用。
+    if (providers.gradleProperty("nativeAudioEnabled").orNull != "false") {
+        externalNativeBuild {
+            cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+        }
+    }
 }
 
 dependencies {

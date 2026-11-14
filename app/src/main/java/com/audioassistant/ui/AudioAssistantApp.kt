@@ -179,6 +179,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                 composable(EDITOR_ROUTE, arguments = listOf(navArgument("songId") { type = NavType.StringType; defaultValue = "" })) { editorEntry ->
                     val songId = editorEntry.arguments?.getString("songId")
                     val editor by workspace.editor.state.collectAsStateWithLifecycle()
+                    val waveform by workspace.editor.waveform.state.collectAsStateWithLifecycle()
                     LaunchedEffect(songId, state.ready) { if (state.ready && !songId.isNullOrBlank()) workspace.editor.open(songId) }
                     EditorScreen(
                         song = state.songs.firstOrNull { it.id == songId }, onBack = { exitEditor() },
@@ -186,6 +187,10 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         onAction = workspace.editor::act,
                         presentation = if (editor.songId == songId) editor else EditorPresentation(busy = true),
                         isLoading = !state.ready && state.loadingMessage != null,
+                        waveform = if (waveform.songId == songId) waveform else com.audioassistant.waveform.WaveformState(),
+                        onWaveformRetry = workspace.editor.waveform::retry,
+                        onWaveformCancel = workspace.editor.waveform::cancel,
+                        onWaveformSeek = workspace.editor::seek,
                     )
                 }
             }
