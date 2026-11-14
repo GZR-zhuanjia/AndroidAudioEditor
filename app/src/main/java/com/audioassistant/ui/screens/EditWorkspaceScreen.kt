@@ -65,6 +65,7 @@ fun EditWorkspaceScreen(
     onEditor: (String?) -> Unit, onExport: () -> Unit, onOrder: (List<String>) -> Unit,
     onMove: (String, Int) -> Unit, onRemove: (String) -> Unit, onRelink: (String) -> Unit,
     onRefresh: () -> Unit, onDragState: (Boolean) -> Unit,
+    preview: WorkspacePreviewUi, onPreviewAll: () -> Unit,
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val list = rememberLazyListState()
@@ -169,11 +170,14 @@ fun EditWorkspaceScreen(
         if (songs.isNotEmpty()) ActionDock {
             SectionHeader("${songs.size} 首歌曲", "预计 ${formatTime(songs.sumOf { it.editedDurationUs })}")
             ActionPair(
-                first = { SecondaryActionButton("试听全部", AppIcon.PLAY, {}, it, enabled = false) },
+                first = { SecondaryActionButton(if (preview.playing) "暂停试听" else "试听全部",
+                    if (preview.playing) AppIcon.PAUSE else AppIcon.PLAY, onPreviewAll, it,
+                    enabled && !preview.busy && songs.any { song -> song.editedDurationUs > 0 } && reorder.draggedId == null) },
                 second = { PrimaryActionButton("导出音频", AppIcon.DOWNLOAD, onExport, it, enabled && reorder.draggedId == null) },
                 stackAt = 240.dp, stackForLargeText = false,
             )
-            NoteRow("试听与导出暂未开放，可先配置导出设置")
+            preview.error?.let { NoteRow(it, AppIcon.ERROR) }
+            NoteRow("试听未做响度均衡 · 导出暂未开放")
         }
     }
 }

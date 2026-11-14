@@ -85,6 +85,8 @@ private fun EditorInformation(
             Text(song.name, style = MaterialTheme.typography.titleMedium)
             Text("原始 ${formatTime(song.originalDurationUs)} · 已保留 ${formatTime(song.editedDurationUs)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${state.previewLabel} · 未做响度均衡", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+            state.error?.let { NoteRow(it, AppIcon.ERROR) }
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.Bottom) {
@@ -92,7 +94,7 @@ private fun EditorInformation(
                     Text("当前播放时间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(editorTime(state.positionUs), style = MaterialTheme.typography.headlineSmall)
                 }
-                Text("/ ${formatTime(song.editedDurationUs)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("/ ${formatTime(state.durationUs)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
@@ -102,8 +104,10 @@ private fun EditorInformation(
         item {
             when (val stage = state.stage) {
                 EditorStage.Ready -> {
-                    if (!state.playbackReady) NoteRow("试听与剪切暂未开放")
-                    else NoteRow("播放时标记不需要的片段起点", AppIcon.START)
+                    if (state.busy) NoteRow("正在准备试听或保存编辑…")
+                    else if (state.editedDurationUs == 0L && state.editingReady) NoteRow("已无保留片段，可从更多编辑中撤销或恢复")
+                    else if (!state.playbackReady && state.error == null) NoteRow("正在准备音频…")
+                    else if (state.playbackReady) NoteRow(if (state.originalPreview) "原曲试听中，可从更多编辑切回编辑结果" else "播放时标记不需要的片段起点", AppIcon.START)
                 }
                 is EditorStage.StartMarked -> StagePanel {
                     SectionHeader("已标记开始", icon = AppIcon.START)
@@ -123,8 +127,8 @@ private fun EditorInformation(
                     TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = state.editingReady)
                 }
                 is EditorStage.AtSeam -> StagePanel {
-                    SectionHeader("已删除选区", icon = AppIcon.CHECK)
-                    Text("已暂停在接缝 ${editorTime(stage.positionUs)}", style = MaterialTheme.typography.bodyMedium)
+                    SectionHeader(stage.message, icon = AppIcon.CHECK)
+                    Text("${if (state.isPlaying) "接缝位置" else "已暂停在接缝"} ${editorTime(stage.positionUs)}", style = MaterialTheme.typography.bodyMedium)
                     ActionPair(
                         { SecondaryActionButton("试听接缝", AppIcon.SPLIT, { onAction(EditorAction.PREVIEW_SEAM) }, it, state.playbackReady) },
                         { SecondaryActionButton("撤销", AppIcon.UNDO, { onAction(EditorAction.UNDO) }, it, state.editingReady && state.canUndo) },
@@ -153,9 +157,9 @@ private fun EditorControls(state: EditorPresentation, onAction: (EditorAction) -
             SeekControl("前进 5 秒", AppIcon.FORWARD, { onAction(EditorAction.FORWARD) }, state.playbackReady, Modifier.weight(1f))
         }
         ActionPair(
-            first = { SecondaryActionButton("标记开始", AppIcon.START, { onAction(EditorAction.MARK_START) }, it, state.editingReady && state.playbackReady) },
+            first = { SecondaryActionButton("标记开始", AppIcon.START, { onAction(EditorAction.MARK_START) }, it, state.editingReady && state.playbackReady && state.canMark) },
             second = { SecondaryActionButton("标记结束", AppIcon.END, { onAction(EditorAction.MARK_END) }, it,
-                state.editingReady && state.playbackReady && state.stage is EditorStage.StartMarked) },
+                state.editingReady && state.playbackReady && state.canMark && state.stage is EditorStage.StartMarked) },
             stackAt = 240.dp, stackForLargeText = false,
         )
     }

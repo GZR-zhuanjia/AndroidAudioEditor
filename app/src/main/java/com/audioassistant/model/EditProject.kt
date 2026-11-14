@@ -36,6 +36,10 @@ data class SongEdit(
     val id: String,
     val sourceId: String,
     val segments: List<AudioSegment>,
+    val resumePositionUs: Long = 0,
+    val deleted: List<DeletedAudio> = emptyList(),
+    val undo: List<EditVersion> = emptyList(),
+    val redo: List<EditVersion> = emptyList(),
 )
 
 @Serializable
@@ -48,11 +52,22 @@ data class ExportSettings(
 @Serializable
 enum class OutputFormat { MP3 }
 
-/** 仅一份最近项目；撤销栈和编辑算法在阶段 4 实现。 */
+/** 仅一份最近项目；当前片段及有界历史均为非破坏性元数据。 */
 @Serializable
 data class EditProject(
     val schemaVersion: Int = 1,
     val sources: List<SourceReference> = emptyList(),
     val songs: List<SongEdit> = emptyList(),
     val exportSettings: ExportSettings = ExportSettings(),
+)
+
+/** 实际删除的源片段，可单独恢复，不含已在此前删除的空洞。 */
+@Serializable
+data class DeletedAudio(val id: String, val segments: List<AudioSegment>)
+
+@Serializable
+data class EditVersion(
+    val segments: List<AudioSegment>,
+    val deleted: List<DeletedAudio>,
+    val positionUs: Long,
 )

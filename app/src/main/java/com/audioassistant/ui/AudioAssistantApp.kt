@@ -5,8 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,13 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +24,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -57,21 +52,28 @@ import com.audioassistant.ui.components.StateBanner
 import com.audioassistant.ui.components.SuccessOptions
 import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.VideoNameOptions
+import com.audioassistant.ui.navigation.AppBottomBar
+import com.audioassistant.ui.navigation.AppMotion
 import com.audioassistant.ui.navigation.Destination
 import com.audioassistant.ui.navigation.EDITOR_ROUTE
 import com.audioassistant.ui.screens.EditWorkspaceScreen
+import com.audioassistant.ui.screens.EditorPresentation
 import com.audioassistant.ui.screens.EditorScreen
 import com.audioassistant.ui.screens.HomeScreen
 import com.audioassistant.ui.screens.LibraryScreen
 import com.audioassistant.ui.screens.VideoScreen
 import com.audioassistant.ui.theme.AppSheetShape
 import com.audioassistant.ui.theme.AppSpacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     // ViewModel 属于 Activity，绝不在每个 composable 路由内重新创建队列。
     val state by workspace.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { withContext(Dispatchers.Default) { AppIcon.entries.forEach { it.vector } } }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { workspace.editor.pauseForBackground() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (state.ready && !state.isWorking && state.songs.isNotEmpty()) workspace.refreshSources()
     }
@@ -95,6 +97,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     val current = Destination.entries.firstOrNull { it.route == route } ?: Destination.HOME
 
     fun navigateTo(destination: Destination) {
+        if (route == destination.route) return
         nav.navigate(destination.route) {
             popUpTo(nav.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
@@ -103,7 +106,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     }
     fun exitEditor() {
         // 项目列表/设置已逐次自动保存；阶段 4 接入剪辑后须复用同一写入队列。
-        nav.popBackStack()
+        workspace.editor.close { nav.popBackStack() }
     }
 
 
@@ -128,34 +131,14 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
             )
         },
         bottomBar = {
-            if (!inEditor) Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
-                    Destination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = current == destination,
-                            enabled = !state.isReordering,
-                            onClick = { navigateTo(destination) },
-                            icon = { AppGlyph(destination.icon, modifier = Modifier.size(AppSpacing.icon)) },
-                            label = { Text(destination.navLabel, style = MaterialTheme.typography.labelMedium) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            ),
-                        )
-                    }
-                }
-            }
+            if (!inEditor) AppBottomBar(current, !state.isReordering) { navigateTo(it) }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             StateBanner(state.loadingMessage, state.errorMessage, workspace::dismissError)
             NavHost(navController = nav, startDestination = Destination.HOME.route, modifier = Modifier.weight(1f),
-                enterTransition = { EnterTransition.None }, exitTransition = { ExitTransition.None },
-                popEnterTransition = { EnterTransition.None }, popExitTransition = { ExitTransition.None },
+                enterTransition = { AppMotion.enter() }, exitTransition = { AppMotion.exit() },
+                popEnterTransition = { AppMotion.enter() }, popExitTransition = { AppMotion.exit() },
             ) {
                 composable(Destination.HOME.route) {
                     HomeScreen(state.songs.size, { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
@@ -170,8 +153,9 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     )
                 }
                 composable(Destination.EDIT.route) {
+                    val preview by workspace.editor.workspaceState.collectAsStateWithLifecycle()
                     EditWorkspaceScreen(
-                        songs = state.songs, enabled = state.ready && !state.isWorking, cancelDragSignal = state.cancelDragSignal,
+                        songs = state.songs, enabled = state.ready && !state.isWorking && !preview.busy, cancelDragSignal = state.cancelDragSignal,
                         onImport = { launchPicker { audioFiles.launch(arrayOf("audio/*")) } },
                         onLibrary = { navigateTo(Destination.LIBRARY) },
                         onEditor = { songId -> nav.navigate("editor?songId=${Uri.encode(songId.orEmpty())}") { launchSingleTop = true } },
@@ -180,6 +164,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         onRemove = workspace::removeSong,
                         onRelink = { id -> relinkSongId = id; launchPicker { relinkFile.launch(arrayOf("audio/*")) } },
                         onRefresh = workspace::refreshSources, onDragState = workspace::setReordering,
+                        preview = preview, onPreviewAll = workspace.editor::playWorkspace,
                     )
                 }
                 composable(Destination.LIBRARY.route) {
@@ -193,10 +178,13 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                 }
                 composable(EDITOR_ROUTE, arguments = listOf(navArgument("songId") { type = NavType.StringType; defaultValue = "" })) { editorEntry ->
                     val songId = editorEntry.arguments?.getString("songId")
+                    val editor by workspace.editor.state.collectAsStateWithLifecycle()
+                    LaunchedEffect(songId, state.ready) { if (state.ready && !songId.isNullOrBlank()) workspace.editor.open(songId) }
                     EditorScreen(
                         song = state.songs.firstOrNull { it.id == songId }, onBack = { exitEditor() },
                         onAdjustTime = { workspace.showSheet(AppSheet.MORE_EDIT) },
-                        onAction = { workspace.unavailable(it.label) },
+                        onAction = workspace.editor::act,
+                        presentation = if (editor.songId == songId) editor else EditorPresentation(busy = true),
                         isLoading = !state.ready && state.loadingMessage != null,
                     )
                 }
@@ -227,7 +215,12 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
             when (state.sheet) {
                 AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, workspace::closeSheet)
                 AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, workspace::closeSheet)
-                AppSheet.MORE_EDIT -> EditorOptions(workspace::closeSheet)
+                AppSheet.MORE_EDIT -> {
+                    val editor by workspace.editor.state.collectAsStateWithLifecycle()
+                    EditorOptions(editor, workspace::closeSheet, workspace.editor::act, workspace.editor::inputBoundary,
+                        workspace.editor::adjustBoundary, workspace.editor::boundaryAtPosition,
+                        workspace.editor::restoreDeleted, workspace.editor::inputSeek)
+                }
                 null -> Unit
             }
         }

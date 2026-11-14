@@ -13,6 +13,7 @@ import com.audioassistant.model.ResultOrigin
 import com.audioassistant.model.SongEdit
 import com.audioassistant.model.SourceReference
 import com.audioassistant.model.SourceStorage
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -21,7 +22,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 data class VideoItemUi(
     val id: String, val name: String, val uri: String,
@@ -55,6 +55,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     val state = mutableState.asStateFlow()
     private val commands = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private var pending = 0
+    val editor = AudioEditor(application, repository, viewModelScope, ::renderProject)
     private var sourceErrors: Map<String, String> = emptyMap()
 
     init {
@@ -139,6 +140,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun importSongs(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        editor.stopWorkspacePreview()
         enqueue("正在添加歌曲并保存项目…") {
             val messages = mutableListOf<String>()
             for (uri in uris.distinct()) {
@@ -169,13 +171,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun replaceSongSource(songId: String, uri: Uri) = enqueue("正在重新关联源文件…") {
+        editor.stopWorkspacePreview()
         val project = repository.snapshot.value.project
         val song = project.songs.first { it.id == songId }
         val old = project.sources.first { it.id == song.sourceId }
         val media = importer.inspect(uri, video = false)
         require(project.sources.none { it.id != old.id && (it.originalUri == media.uri || it.location == media.uri) }) { "该文件已被另一首歌曲使用" }
-        require(project.songs.filter { it.sourceId == old.id }.flatMap { it.segments }.all { it.sourceEndUs <= requireNotNull(media.durationUs) }) {
-            "新选择的文件短于已有剪辑范围，已保留原引用和剪辑数据"
+        val referencedParts = project.songs.filter { it.sourceId == old.id }.flatMap { songEdit ->
+            songEdit.segments + songEdit.deleted.flatMap { it.segments } +
+                (songEdit.undo + songEdit.redo).flatMap { it.segments + it.deleted.flatMap { removed -> removed.segments } }
+        }
+        require(referencedParts.all { it.sourceEndUs <= requireNotNull(media.durationUs) }) {
+            "新选择的文件短于已有剪辑或历史范围，已保留原引用和剪辑数据"
         }
         val prepared = importer.prepareSong(media)
         val replacement = prepared.copy(source = prepared.source.copy(id = old.id))
@@ -199,6 +206,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun removeSong(id: String) = enqueue("正在移除歌曲并保存…") {
+        editor.stopWorkspacePreview()
         val previous = repository.snapshot.value.project.sources
         repository.update { current ->
             val songs = current.project.songs.filterNot { it.id == id }
@@ -219,6 +227,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (ids.size != current.size || ids.toSet() != current.map { it.id }.toSet()) return
         val byId = current.associateBy { it.id }
         mutableState.update { it.copy(songs = ids.map(byId::getValue)) }
+        editor.stopWorkspacePreview()
         enqueue("正在保存歌曲顺序…") {
             repository.update { snapshot ->
                 val songs = snapshot.project.songs.associateBy { it.id }
@@ -243,6 +252,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun setReordering(active: Boolean) { mutableState.update { it.copy(isReordering = active) } }
 
     fun addResultToProject(id: String) = enqueue("正在添加成果并保存项目…") {
+        editor.stopWorkspacePreview()
         val result = repository.snapshot.value.results.first { it.id == id }
         val file = repository.internalFile(result.relativePath)
         require(file.isFile && file.length() == result.sizeBytes) { "成果文件缺失或大小已改变" }
@@ -281,4 +291,5 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun dismissError() { mutableState.update { it.copy(errorMessage = null) } }
     fun dismissNotice() { mutableState.update { it.copy(notice = null) } }
     fun dismissSuccess() { mutableState.update { it.copy(completedResult = null) } }
+    override fun onCleared() { editor.release(); super.onCleared() }
 }

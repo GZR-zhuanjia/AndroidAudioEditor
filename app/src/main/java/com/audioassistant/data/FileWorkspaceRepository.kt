@@ -110,12 +110,30 @@ class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
         var projectDuration = 0L
         project.songs.forEach { song ->
             require(song.id.isNotBlank() && sources.containsKey(song.sourceId))
-            var duration = 0L
-            song.segments.forEach { segment ->
-                require(segment.sourceId == song.sourceId)
-                val source = sources.getValue(segment.sourceId)
-                require(segment.sourceEndUs <= source.originalDurationUs)
-                duration = Math.addExact(duration, segment.durationUs)
+            fun validateParts(parts: List<com.audioassistant.model.AudioSegment>): Long {
+                var duration = 0L
+                var previousEnd = 0L
+                parts.forEach { segment ->
+                    require(segment.sourceId == song.sourceId)
+                    val source = sources.getValue(segment.sourceId)
+                    require(segment.sourceEndUs <= source.originalDurationUs && segment.sourceStartUs >= previousEnd)
+                    duration = Math.addExact(duration, segment.durationUs)
+                    previousEnd = segment.sourceEndUs
+                }
+                return duration
+            }
+            fun validateDeleted(deleted: List<com.audioassistant.model.DeletedAudio>) {
+                require(deleted.map { it.id }.toSet().size == deleted.size)
+                deleted.forEach { require(it.id.isNotBlank() && it.segments.isNotEmpty()); validateParts(it.segments) }
+            }
+            val duration = validateParts(song.segments)
+            require(song.resumePositionUs in 0..duration)
+            validateDeleted(song.deleted)
+            require(song.undo.size <= 50 && song.redo.size <= 50)
+            (song.undo + song.redo).forEach { version ->
+                val historicalDuration = validateParts(version.segments)
+                require(version.positionUs in 0..historicalDuration)
+                validateDeleted(version.deleted)
             }
             projectDuration = Math.addExact(projectDuration, duration)
         }
