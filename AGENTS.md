@@ -5,4 +5,4 @@
 云端禁止执行任何 Gradle build/test/lint、Android/NDK/CMake 编译、模拟器或等效测试，不为验证安装 SDK/NDK 或下载大型依赖。
 允许源码、资源、数据结构及 Git diff 静态检查；每阶段最多一次 git diff --check。
 不得将编写完成称为编译或设备验证通过。不得创建虚假音频实现、伪造原生库或成功状态。
-保留历史，不强推，不提交构建产物。当前交付仓库为 GZR-zhuanjia/AndriodAudioEditor，允许阶段性直接推送 main。
+保留历史，不强推，不提交构建产物。当前交付仓库为 GZR-zhuanjia/AndroidAudioEditor（GitHub 已从 AndriodAudioEditor 更名），允许阶段性直接推送 main。

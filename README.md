@@ -1,4 +1,4 @@
-# 音频助手 · AndriodAudioEditor
+# 音频助手 · AndroidAudioEditor
 
 Android 13+ 单人离线音频工具。新工程重启开发，默认 MP3，完全中文。
 

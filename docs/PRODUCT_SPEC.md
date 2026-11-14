@@ -4,7 +4,7 @@
 
 ## 0. 重启与仓库
 
-旧仓库 GZR-zhuanjia/AudioAssistant；交付新仓库 GZR-zhuanjia/AndriodAudioEditor（保留用户给定拼写）。先检查仓库结构、分支和 Git 状态。旧 UI 与导航不沿用；确有价值的底层代码经检查才可复用。空项目可新建，保留所有历史，不无意义全仓重写、不强推、不随意删除重要源码。
+旧仓库 GZR-zhuanjia/AudioAssistant；用户原指定新仓库 GZR-zhuanjia/AndriodAudioEditor。阶段 3 推送时 GitHub 明确提示已更名为 GZR-zhuanjia/AndroidAudioEditor，当前交付使用这个正式地址，原历史保留。先检查仓库结构、分支和 Git 状态。旧 UI 与导航不沿用；确有价值的底层代码经检查才可复用。空项目可新建，保留所有历史，不无意义全仓重写、不强推、不随意删除重要源码。
 
 ## 1. 定位与平台
 

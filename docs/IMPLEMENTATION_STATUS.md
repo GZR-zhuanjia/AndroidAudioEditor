@@ -4,7 +4,7 @@
 
 ## 仓库与起点
 
-新仓库 `GZR-zhuanjia/AndriodAudioEditor` 保留初始 `6720ad4`，阶段 1 为 `a2fd7f6`，阶段 2 为 `7658be9`。本阶段开始前 fetch 远端 main，确认与 7658be9 一致、工作区干净。旧仓库未修改，不沿用旧产品 UI/代码；Wrapper 为阶段 1 唯一复用的通用工具文件。
+新仓库 `GZR-zhuanjia/AndroidAudioEditor`（原名 AndriodAudioEditor，阶段 3 推送时 GitHub 提示更名）保留初始 `6720ad4`，阶段 1 为 `a2fd7f6`，阶段 2 为 `7658be9`。本阶段开始前 fetch 远端 main，确认与 7658be9 一致、工作区干净。旧仓库未修改，不沿用旧产品 UI/代码；Wrapper 为阶段 1 唯一复用的通用工具文件。
 
 ## 已完成源码
 
