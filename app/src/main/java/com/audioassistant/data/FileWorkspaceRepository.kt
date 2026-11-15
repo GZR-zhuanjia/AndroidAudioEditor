@@ -16,7 +16,18 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
+import com.audioassistant.model.LibraryRecord
+
+class FileLease internal constructor(private val release: () -> Unit) : Closeable {
+    private val closed = AtomicBoolean()
+    override fun close() { if (closed.compareAndSet(false, true)) release() }
+}
+class ResultAccess(val record: LibraryRecord, val file: File, private val lease: FileLease) : Closeable {
+    override fun close() = lease.close()
+}
 
 /** 仅磁盘提交成功后发布状态；损坏/未知版本不会以空项目覆盖。 */
 class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
@@ -85,20 +96,51 @@ class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
             value.results.any { it.relativePath == relativePath }
     }
 
-    /** Processing leases participate in the same cleanup checks as persisted references. */
+    private fun leaseLocked(paths: Set<String>): FileLease {
+        paths.forEach { internalFile(it) }
+        paths.forEach { path -> activeFiles.compute(path) { _, count -> (count ?: 0) + 1 } }
+        return FileLease { paths.forEach { path -> activeFiles.computeIfPresent(path) { _, count -> if (count <= 1) null else count - 1 } } }
+    }
+
+    suspend fun acquireFileReferences(paths: Set<String>): FileLease {
+        var lease: FileLease? = null
+        try {
+            // Capture the handle outside withContext: prompt cancellation must never lose an acquired lease.
+            withContext(Dispatchers.IO) { mutex.withLock { check(loaded); lease = leaseLocked(paths) } }
+            return requireNotNull(lease)
+        } catch (error: Throwable) { lease?.close(); throw error }
+    }
+
+    /** Lookup, validation and pinning are one transaction with deletion/cleanup. */
+    suspend fun openResult(id: String): ResultAccess {
+        var access: ResultAccess? = null
+        try {
+            withContext(Dispatchers.IO) { mutex.withLock {
+                check(loaded)
+                val record = snapshot.value.results.firstOrNull { it.id == id } ?: error("成果已从成果库移除")
+                val file = internalFile(record.relativePath)
+                require(file.isFile && file.length() == record.sizeBytes) { "成果文件缺失或大小已改变" }
+                access = ResultAccess(record, file, leaseLocked(setOf(record.relativePath)))
+            } }
+            return requireNotNull(access)
+        } catch (error: Throwable) { access?.close(); throw error }
+    }
+
     suspend fun <T> withFileReferences(paths: Set<String>, block: suspend () -> T): T {
+        val lease = acquireFileReferences(paths)
+        try { return block() } finally { lease.close() }
+    }
+
+    /** Only completed, UUID-owned result files; .part production is never swept during runtime. */
+    suspend fun cleanupResults(): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(loaded)
-            paths.forEach { internalFile(it) }
-            paths.forEach { activeFiles[it] = (activeFiles[it] ?: 0) + 1 }
-        }
-        try { return block() }
-        finally { withContext(NonCancellable) { mutex.withLock {
-            paths.forEach { path ->
-                val count = (activeFiles[path] ?: 1) - 1
-                if (count == 0) activeFiles.remove(path) else activeFiles[path] = count
+            var complete = true
+            File(filesDir, "results").listFiles()?.forEach { file ->
+                if (file.name.matches(Regex("[0-9a-f-]{36}\\.mp3")) && !isReferenced("results/${file.name}") && !file.delete()) complete = false
             }
-        } } }
+            complete
+        }
     }
 
     /** Startup only, after a valid snapshot load and before allowing new processing. No task recovery. */

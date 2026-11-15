@@ -53,7 +53,7 @@ loudnorm每首单独两遍：I=-16:TP=-1.5:LRA=11，先丢弃分析输出，unin
 
 全部歌曲最终PCM在同一LAME会话连续编码，最后仅flush一次，写Xing/LAME delay/padding信息。临时PCM在files/processing/UUID，约384KB/秒；预估全部PCM+均衡当前最大曲额外PCM+MP3+32MiB，空间不足/写失败停止。取消/失败/完成清本任务临时文件，异常清理失败提示；进程中断残留下次有效加载后清。
 
-MP3先写files/results/UUID.part，native关闭后Kotlin检查非零、真实MP3 probe与有效时长/采样参数、fsync，再NonCancellable rename成UUID.mp3并AtomicFile登记元数据；提交阶段取消保留成功成果，其他部分取消不入库。同名用户名称创建新副本，实体UUID不覆盖。Repository持活动引用，项目/成果引用也参与清理；JSON损坏时禁止清理。成果管理其他能力在阶段7。
+MP3先写files/results/UUID.part，native关闭后Kotlin检查非零、真实MP3 probe与有效时长/采样参数、fsync，再NonCancellable中持目标文件引用、rename成UUID.mp3并AtomicFile登记；提交区取消保留成果，其他部分取消不入库。同名创建新副本，实体UUID不覆盖。项目/成果/活动引用参与清理，JSON损坏不清理。阶段7已接Kotlin成果管理与SAF复制，没有改变本目录原生实现或处理参数；细节见ARCHITECTURE。
 
 所有路径仍未编译/设备验证；FFmpeg图协商、loudnorm长度、priming/PTS/MP3时长和接缝需本地核对，普通Media3预览未响度处理，也不保证与最终编码逐采样一致。
 

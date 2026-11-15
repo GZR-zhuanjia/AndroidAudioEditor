@@ -1,6 +1,10 @@
 package com.audioassistant.ui
 
 import android.net.Uri
+import android.app.Activity
+import android.content.ClipData
+import android.content.Intent
+import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -31,6 +35,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -52,6 +57,11 @@ import com.audioassistant.ui.components.StateBanner
 import com.audioassistant.ui.components.SuccessOptions
 import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.VideoNameOptions
+import com.audioassistant.ui.components.ResultPlayerDock
+import com.audioassistant.ui.components.FileOperationDock
+import com.audioassistant.ui.components.SaveCopyOptions
+import com.audioassistant.ui.components.RenameResultDialog
+import com.audioassistant.ui.components.DeleteResultDialog
 import com.audioassistant.ui.navigation.AppBottomBar
 import com.audioassistant.ui.navigation.AppMotion
 import com.audioassistant.ui.navigation.Destination
@@ -72,10 +82,11 @@ import kotlinx.coroutines.withContext
 fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     // ViewModel 属于 Activity，绝不在每个 composable 路由内重新创建队列。
     val state by workspace.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     LaunchedEffect(Unit) { withContext(Dispatchers.Default) { AppIcon.entries.forEach { it.vector } } }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { workspace.editor.pauseForBackground() }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { workspace.editor.pauseForBackground(); workspace.resultPreview.pause() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (state.ready && !state.isWorking && state.songs.isNotEmpty()) workspace.refreshSources()
+        if (state.ready && !state.isWorking && (state.songs.isNotEmpty() || state.results.isNotEmpty())) workspace.refreshSources()
     }
     var relinkSongId by rememberSaveable { mutableStateOf<String?>(null) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { workspace.importVideos(it) }
@@ -85,6 +96,23 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         val songId = relinkSongId
         relinkSongId = null
         if (uri != null && songId != null) workspace.replaceSongSource(songId, uri)
+    }
+    val saveFolder = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) result.data?.data?.let { uri ->
+            workspace.rememberSaveLocation(uri, result.data?.flags ?: 0)
+        }
+    }
+    val share = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { /* choosing/cancelling is not a delivery receipt */ }
+    LaunchedEffect(state.pendingShare?.token) {
+        val request = state.pendingShare ?: return@LaunchedEffect
+        workspace.consumeShare(request.token)
+        try {
+            val uri = Uri.parse(request.uri)
+            val intent = Intent(Intent.ACTION_SEND).setType("audio/mpeg").putExtra(Intent.EXTRA_STREAM, uri)
+                .putExtra(Intent.EXTRA_TITLE, request.name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.clipData = ClipData.newUri(context.contentResolver, request.name, uri)
+            share.launch(Intent.createChooser(intent, "分享音频").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (_: Exception) { workspace.reportError("无法打开系统分享面板；内部成果仍保留，请稍后重试。") }
     }
     fun launchPicker(action: () -> Unit) {
         try { action() } catch (_: Exception) { workspace.reportError("无法打开系统选择器，请确认设备上有可用的文件选择应用后重试。") }
@@ -105,7 +133,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         }
     }
     fun exitEditor() {
-        // 项目列表/设置已逐次自动保存；阶段 4 接入剪辑后须复用同一写入队列。
+        // 等待当前编辑自动保存完成，再返回同一个工作区。
         workspace.editor.close { nav.popBackStack() }
     }
 
@@ -159,24 +187,21 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         songs = state.songs, enabled = state.ready && !state.isWorking && !preview.busy, cancelDragSignal = state.cancelDragSignal,
                         onImport = { launchPicker { audioFiles.launch(arrayOf("audio/*")) } },
                         onLibrary = { navigateTo(Destination.LIBRARY) },
-                        onEditor = { songId -> nav.navigate("editor?songId=${Uri.encode(songId.orEmpty())}") { launchSingleTop = true } },
+                        onEditor = { songId -> workspace.resultPreview.stop(); nav.navigate("editor?songId=${Uri.encode(songId.orEmpty())}") { launchSingleTop = true } },
                         onExport = { workspace.showSheet(AppSheet.EXPORT) },
                         onOrder = workspace::reorderSongs, onMove = workspace::moveSong,
                         onRemove = workspace::removeSong,
                         onRelink = { id -> relinkSongId = id; launchPicker { relinkFile.launch(arrayOf("audio/*")) } },
                         onRefresh = workspace::refreshSources, onDragState = workspace::setReordering,
-                        preview = preview, onPreviewAll = workspace.editor::playWorkspace,
+                        preview = preview, onPreviewAll = { workspace.resultPreview.stop(); workspace.editor.playWorkspace() },
                         processing = state.processing, onCancel = workspace::cancelProcessing,
                     )
                 }
                 composable(Destination.LIBRARY.route) {
+                    val playback by workspace.resultPreview.summary.collectAsStateWithLifecycle()
                     LibraryScreen(state.results, state.category, workspace::selectCategory, onMakeAudio = { navigateTo(Destination.HOME) },
-                        isLoading = !state.ready && state.loadingMessage != null) { resultId, action ->
-                        if (action == "添加到拼接") {
-                            if (state.ready && !state.isWorking) workspace.addResultToProject(resultId)
-                            else workspace.reportError("正在读取或保存项目，请稍后再试。")
-                        } else workspace.unavailable(action)
-                    }
+                        isLoading = !state.ready && state.loadingMessage != null, enabled = state.ready && !state.isWorking,
+                        playback = playback, onAction = workspace::onResultAction)
                 }
                 composable(EDITOR_ROUTE, arguments = listOf(navArgument("songId") { type = NavType.StringType; defaultValue = "" })) { editorEntry ->
                     val songId = editorEntry.arguments?.getString("songId")
@@ -196,11 +221,15 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     )
                 }
             }
+            if (!inEditor) {
+                FileOperationDock(workspace.fileOperation, workspace::cancelFileOperation)
+                ResultPlayerDock(workspace.resultPreview)
+            }
         }
     }
 
     // 放在 NavHost 之后注册，让工具栏与系统返回走相同出口；弹窗/面板优先关闭自身。
-    BackHandler(enabled = !inEditor && !state.isReordering && current != Destination.HOME && state.sheet == null && state.completedResult == null) {
+    BackHandler(enabled = !inEditor && !state.isReordering && current != Destination.HOME && state.sheet == null && state.completedResult == null && state.saveTarget == null && state.resultDialog == null) {
         navigateTo(Destination.HOME)
     }
     BackHandler(enabled = inEditor && state.sheet == null && state.completedResult == null) { exitEditor() }
@@ -209,12 +238,27 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
 
     val success = state.completedResult
     if (success != null) {
+        val playback by workspace.resultPreview.summary.collectAsStateWithLifecycle()
         ModalBottomSheet(onDismissRequest = workspace::dismissSuccess, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
-            SuccessOptions(success, workspace::unavailable, onLibrary = {
+            SuccessOptions(success, { workspace.onResultAction(success.id, it) }, onLibrary = {
                 workspace.dismissSuccess()
+                workspace.selectCategory(ResultCategory.ALL)
                 navigateTo(Destination.LIBRARY)
-            }, onClose = workspace::dismissSuccess)
+            }, onClose = workspace::dismissSuccess, playback = playback, enabled = state.ready && !state.isWorking)
+        }
+    } else if (state.saveTarget != null) {
+        val result = state.results.firstOrNull { it.id == state.saveTarget }
+        if (result != null) ModalBottomSheet(onDismissRequest = workspace::closeSaveOptions,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
+            SaveCopyOptions(result, state.saveLocation, state.ready && !state.isWorking, state.errorMessage,
+                onSave = { workspace.saveResultCopy(result.id) }, onChoose = { launchPicker {
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                    state.saveLocation?.uri?.let { intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it)) }
+                    saveFolder.launch(intent)
+                } }, onClose = workspace::closeSaveOptions)
         }
     } else if (state.sheet != null) {
         ModalBottomSheet(onDismissRequest = workspace::closeSheet, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -230,6 +274,15 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                 }
                 null -> Unit
             }
+        }
+    }
+    state.resultDialog?.let { dialog ->
+        val result = state.results.firstOrNull { it.id == dialog.id }
+        if (result != null) when (dialog.kind) {
+            ResultDialogKind.RENAME -> RenameResultDialog(result, state.ready && !state.isWorking,
+                workspace::closeResultDialog, state.errorMessage) { workspace.renameResult(result.id, it) }
+            ResultDialogKind.DELETE -> DeleteResultDialog(result, state.ready && !state.isWorking,
+                workspace::closeResultDialog) { workspace.deleteResult(result.id) }
         }
     }
     state.notice?.let { notice ->

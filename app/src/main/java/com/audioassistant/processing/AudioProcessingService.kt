@@ -3,6 +3,7 @@ package com.audioassistant.processing
 import android.content.Context
 import android.net.Uri
 import com.audioassistant.data.FileWorkspaceRepository
+import com.audioassistant.data.ResultNames
 import com.audioassistant.engine.JniNativeAudioEngine
 import com.audioassistant.model.EditProject
 import com.audioassistant.model.LibraryRecord
@@ -69,25 +70,24 @@ class AudioProcessingService(
             val id = UUID.randomUUID().toString()
             val path = "results/$id.mp3"
             val destination = repository.internalFile(path)
-            check(!destination.exists() && temporary.renameTo(destination)) { "成果文件提交失败" }
-            var registered: LibraryRecord? = null
             try {
-                repository.update { snapshot ->
-                    val base = name.trim().replace(Regex("(?i)\\.mp3$"), "").replace(Regex("[\\p{Cntrl}/\\\\:*?\"<>|]"), "_").take(100).trim()
-                    require(base.isNotBlank()) { "请输入有效文件名" }
-                    val existing = snapshot.results.map { it.displayName.lowercase() }.toSet()
-                    var display = "$base.mp3"; var copy = 2
-                    while (display.lowercase() in existing) { display = "$base (${copy++}).mp3" }
-                    val result = LibraryRecord(id, display, path, info.durationUs, size, origin)
-                    registered = result
-                    snapshot.copy(results = snapshot.results + result)
+                // Pin the destination BEFORE rename so runtime cleanup cannot sweep the rename/index gap.
+                repository.withFileReferences(setOf(path)) {
+                    check(!destination.exists() && temporary.renameTo(destination)) { "成果文件提交失败" }
+                    var registered: LibraryRecord? = null
+                    repository.update { snapshot ->
+                        val display = ResultNames.unique(name, snapshot.results.map { it.displayName })
+                        val result = LibraryRecord(id, display, path, info.durationUs, size, origin)
+                        registered = result
+                        snapshot.copy(results = snapshot.results + result)
+                    }
+                    requireNotNull(registered).also(onRegistered)
                 }
             } catch (error: Exception) {
                 if (!repository.isReferenced(path) && destination.exists() && !destination.delete())
                     onCleanupWarning("未登记的输出文件暂未能删除，将在下次正确读取项目后清理；没有创建成果记录。")
                 throw error
             }
-            requireNotNull(registered).also(onRegistered)
         }
     }
 

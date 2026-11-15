@@ -1,7 +1,6 @@
 package com.audioassistant.data
 
 import android.content.Context
-import android.content.Intent
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -19,9 +18,9 @@ import java.util.UUID
 
 /** 系统元数据探测；不解码、不转换，不声称替代阶段 5 的 FFmpeg 探测。 */
 data class ImportedMedia(val uri: String, val name: String, val durationUs: Long?, val sizeBytes: Long?, val mimeType: String?)
-data class PreparedSource(val source: SourceReference, val newlyGranted: Boolean)
+data class PreparedSource(val source: SourceReference)
 
-class MediaImporter(private val context: Context, private val repository: FileWorkspaceRepository) {
+class MediaImporter(private val context: Context, private val repository: FileWorkspaceRepository, private val grants: UriGrantLedger) {
     private val resolver = context.contentResolver
 
     suspend fun inspect(uri: Uri, video: Boolean): ImportedMedia = withContext(Dispatchers.IO) {
@@ -70,16 +69,12 @@ class MediaImporter(private val context: Context, private val repository: FileWo
     suspend fun prepareSong(media: ImportedMedia): PreparedSource = withContext(Dispatchers.IO) {
         val uri = Uri.parse(media.uri)
         val hadGrant = resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
-        val retained = hadGrant || try {
-            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
-        } catch (_: Exception) { false }
+        val retained = hadGrant || grants.takeRead(uri)
         val id = UUID.randomUUID().toString()
         val location = if (retained) media.uri else copySource(uri, id, media.sizeBytes)
         PreparedSource(
             SourceReference(id, media.name, if (retained) SourceStorage.PERSISTED_URI else SourceStorage.INTERNAL_FILE,
                 location, requireNotNull(media.durationUs), media.uri, media.mimeType, media.sizeBytes),
-            newlyGranted = retained && !hadGrant,
         )
     }
 
@@ -124,8 +119,8 @@ class MediaImporter(private val context: Context, private val repository: FileWo
         } catch (_: Exception) { false }
     }
 
-    /** 回滚只释放本次新授权/无引用副本；成功提交后的取消不能误删项目来源。 */
-    suspend fun discard(prepared: PreparedSource, protectedUris: Set<String> = emptySet()) = withContext(Dispatchers.IO) {
+    /** 回滚只清无引用内部副本；持久URI授权由写入队列末的账本统一回收。 */
+    suspend fun discard(prepared: PreparedSource) = withContext(Dispatchers.IO) {
         val source = prepared.source
         val referenced = repository.snapshot.value.project.sources.any {
             it.storage == source.storage && it.location == source.location
@@ -135,10 +130,7 @@ class MediaImporter(private val context: Context, private val repository: FileWo
                 SourceStorage.INTERNAL_FILE -> if (!repository.isReferenced(source.location)) {
                     repository.internalFile(source.location).delete()
                 }
-                SourceStorage.PERSISTED_URI -> if (prepared.newlyGranted && source.location !in protectedUris) {
-                    try { resolver.releasePersistableUriPermission(Uri.parse(source.location), Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                    catch (_: SecurityException) { }
-                }
+                SourceStorage.PERSISTED_URI -> Unit
             }
         }
     }

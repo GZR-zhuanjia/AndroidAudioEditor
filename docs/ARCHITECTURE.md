@@ -1,6 +1,6 @@
 # 架构与工具版本
 
-## 当前源码结构（阶段6）
+## 当前源码结构（阶段7）
 
 单个 `:app`，不引入多模块或 DI 框架，依赖方向 UI → ViewModel → Repository / Service → Native Audio Engine。
 
@@ -12,16 +12,22 @@ app/src/main/java/com/audioassistant/
   data/RecentProjectRepository.kt   最近项目契约
   data/FileWorkspaceRepository.kt   Mutex / AtomicFile / JSON / 受控路径与引用校验
   data/MediaImporter.kt             系统元数据、持久读授权与按需内部副本
+  data/LibraryRepository.kt         成果有效性、改名/删除事务
+  data/ResultFileService.kt         分享快照、SAF目录/新文件/复制回读
+  data/UriGrantLedger.kt            本版本获取的持久URI授权账本
+  data/ResultNames.kt               MP3名称清理/去扩展名/去重
   processing/AudioProcessingService.kt  转换/导出编排、临时目录、验证与成果提交
   ui/WorkspaceViewModel.kt          Activity列表/文件操作，持有编辑会话
   ui/AudioEditor.kt                 编辑会话、独立状态Flow、保存协调
   editing/SegmentTimeline.kt        微秒非破坏片段操作/映射
   editing/TimeInput.kt               十进制时间输入
   playback/AudioPreview.kt           Media3真实片段播放列表
+  playback/ResultPreview.kt          完整成品MP3试听、长持有文件引用
   ui/AudioAssistantApp.kt           系统选择器、唯一 NavHost / Scaffold
   ui/navigation/                   四一级入口 + 单曲裁剪子路由
   ui/screens/                      五类中文页面
   ui/components/                   面板、状态、拖动排序状态
+  ui/components/ResultControls.kt   成果播放器/复制进度、改名/删除/另存面板
   ui/theme/                        系统深浅色 Material 3
   engine/NativeAudioEngine.kt       JNI探测/波形/转换/渲染/均衡/编码，worker与取消桥
   waveform/                        多级数据读取、缓存、独立会话Flow
@@ -32,7 +38,7 @@ scripts/                           用户本地获取源码、交叉编译、ELF
 app/src/main/assets/licenses/       完整原生许可与分发说明
 ```
 
-阶段6接通真实转换/导出任务与loudnorm，阶段4按钮式编辑和阶段5波形不变。所有完成项只表示源码已写，未构建/运行；第三方完整源码由锁定脚本在本地取得，不在Git提交大源码树或.so。
+阶段7接通成果管理和文件交付；既有原生编码、裁剪和短动画不变。仍为单app，使用已声明Core的FileProvider及Android DocumentsContract，不引入依赖。所有完成项只表示源码已写，未构建/运行；原生完整源码仍按锁定脚本本地获取，不提交.so。
 
 ## 固定版本
 
@@ -73,7 +79,7 @@ AudioSegment 为原曲半开区间 `[sourceStartUs, sourceEndUs)`，整数微秒
 
 导入建立一段 `[0, originalDurationUs)`；恢复完整保留已存片段，不展开/重新编码源文件。校验来源存在、同曲来源一致、终点不越原曲、ID 不重复、时长累加不溢出。时间映射、跨段删除和撤销/恢复由阶段4的SegmentTimeline与AudioEditor实现，原文件不变。
 
-唯一files/project/workspace.json保存WorkspaceSnapshot(schemaVersion=1)，包含唯一EditProject(schemaVersion=1)和成果元数据。阶段6生产真实成果，记录分类、内部路径、名称、探测时长和大小；普通导入不登记成果。schema未增加字段，阶段7再接改名/删除等管理。
+唯一files/project/workspace.json保存WorkspaceSnapshot(schemaVersion=1)、EditProject与真实成果索引，schema未增字段。成果记录分类、内部路径、名称、探测时长和大小，普通导入不登记。阶段7改名只改展示名称与同路径项目来源名称，不改UUID实体路径/内容；同名加副本后缀。名称去MP3扩展名/非法字符，限制100码点/220 UTF-8字节并留后缀空间。
 
 ## 持久化与失败保护
 
@@ -91,11 +97,25 @@ ViewModel 的 Channel 串行处理导入、移除、排序和设置；Repository
 
 路径必须是规范相对路径，且 canonicalFile 父目录仅 sources/ 或 results/；不接受绝对路径、../ 或规范化后不同的别名。isReferenced 同时检查项目和成果。移除歌曲先提交引用释放，再清理；成果若仍在索引中保留实体。外部原曲和另存副本从不删除。读取损坏项目时禁止清理，避免误删有效来源。
 
-来源清理仍只扫描sources/中本应用UUID命名的.part/.source。阶段6增加Repository活动引用计数，isReferenced同时检查项目/成果/活动任务，导出finally释放；列表和设置在处理期间锁定，导航仍可切换。阶段5只读波形仍持有独立fd，退出取消，不改源文件。
+isReferenced同时检查项目来源、成果索引与活动文件引用计数。阶段7提供幂等FileLease与原子openResult（同一Mutex内查索引、验证大小、持引用），供成品试听、分享/另存与处理使用。句柄获取跨IO取消时捕获并关闭，不丢失引用。计数增减用ConcurrentHashMap原子操作，关闭播放器/完成任务后释放；原曲波形仍只读fd，退出取消。
 
-启动成功读取有效快照、开放任务之前，清理processing/中的本应用UUID目录及results/中UUID.part/UUID.mp3且没有任何引用的文件；不扫描外部URI或未知文件。用于回收进程中断/文件重命名后未登记的残留，不恢复任务。正常结束/失败/取消只清该任务目录和未完成输出；已登记成果不在其内，不能被取消删除。阶段7再完善成果主动删除与授权账本。
+删除先原子移除成果记录，随后只删除无项目/活动引用的内部UUID.mp3；项目仍引用时保留实体，最后歌曲移除/来源替换后清理。清理失败反馈“记录已移除、实体待清理”，不伪装事务回滚。播放该成果时删除会先停止试听。来源清理仍只扫UUID.part/.source，运行期成果清理只扫完成的UUID.mp3、不碰正在生产.part。正式输出重命名前先持有目标路径引用，覆盖rename与索引登记之间的清理窗口；这个变动只涉及Kotlin文件提交，不改原生引擎。
 
-移除/失败时尽量释放本次持久读授权；若视频会话还用到同一 URI 则保守保留。进程在获取授权但未登记前突然结束，或保护视频后退出时，可能保留无文件实体的读授权；不以全量撤销 provider 权限冒险破坏有效引用，阶段 7 再完善授权账本。内部未登记副本会在下一次有效加载后回收。
+启动成功读取有效快照、开放任务前，清理processing/中的UUID目录及results/中无引用UUID.part/UUID.mp3；正常任务仅清自己的临时文件。损坏/未知项目不清理文件或回收权限；不恢复任务、不扫描外部源文件/未知目录。外部另存副本不在内部清理范围。
+
+UriGrantLedger在获取新持久授权之前同步记录owned_uri_grants偏好，覆盖获取与登记间的中断窗口；导入不能持久授权仍只建受控内部副本。有效项目加载后、写入队列每个操作末尾统一回收不再需要的已跟踪授权，保护PERSISTED_URI来源、当前视频与最近保存目录。未跟踪的旧版授权不擅自撤销；树授权在有同authority来源时保守保留，以免设备断开、无法判定祖先关系时伤及项目。有效项目未加载时，连排队操作的finally也不回收授权。
+
+## 阶段7文件交付与试听
+
+ResultPreview用Media3直接播放完整内部MP3，不套原曲/剪辑片段，因而试听的是实际编码/响度成品。持有ResultAccess直至停止/替换；后台暂停且正在准备时也禁止迟到自动播放。一个独立时钟Flow给全局小播放器，摘要Flow只更新播放/加载/错误；复制另有独立Flow、每100ms最多报告一次，不驱动整个导航的时钟重组。小播放器可播放/暂停、拖动定位和停止；打开裁剪器/试听拼接时停止成果播放器，避免叠播。
+
+分享先对真实成果做受控缓存快照，写完fsync、按大小/SHA-256回读核对再发系统ACTION_SEND/ClipData只读授权。FileProvider未导出，路径只开放cache/shared_audio，不暴露files/results或来源目录。快照键含成果ID/名/大小/mtime，重复分享可复用；原库删除不立即删分享快照。完成缓存按24小时在启动/新分享时清理，启动清未完成.part；系统可提前回收cache，分享URI不是永久交付地址。chooser取消/选目标无送达回执，应用不宣称“已发送成功”。
+
+另存Bottom Sheet显示实际名称、最近位置、选择/重新选择按钮；系统ACTION_OPEN_DOCUMENT_TREE让用户授权具体目录，可选U盘，不申请广泛存储权限。external_save偏好只记最近URI/标题，是否长期授权以系统实有权限为准；仅临时授权时如实提示，重开可能重选。选择目录不假称另存完成，随后用户点保存。
+
+每次另存重新查询目录可创建能力和全部子文档ID/名称，选择新名称，createDocument后若返回已有ID则停止、不打开写入也不删它。只对本次确认新建的文档打开写fd，复制内部原字节，尽可能fsync，关闭后重开读回，核对全长与SHA-256；完成确认前取消仅尝试清本次新文件，核对完成后的提交临界区保留已完成副本。内部文件与索引全程不移除。同名不覆盖，实际provider返回文件名用于反馈；目录超过100000项拒绝，不能用未列完的目录猜测覆盖安全。
+
+U盘断开/位置失效/只读/授权失败报真实“位置不可用或读写失败”，给连接U盘和重新选择的入口，不伪造硬件检测；失败会重开另存面板，内部成果保留。新建外部文件若因拔盘无法删除，明确提示可能留下未完成副本，不在未来盲删外部文件。CancellationSignal用于provider打开，循环检查协程取消；已阻塞的provider I/O仍可能延迟。副本回读增加约一遍读取耗时，不保证物理介质断电后数据永不丢失。
 
 ## 后续引擎与兼容性
 
@@ -115,7 +135,7 @@ AudioProcessingService独立于列表写入Channel，Activity ViewModel一次只
 
 loudnorm目标I=-16 LUFS、TP=-1.5dBTP、LRA=11，第一遍真实滤镜graph分析丢弃输出，从指定滤镜/当前线程的uninit日志取实际input_i/tp/lra/thresh/target_offset，第二遍传入这些值、linear=true。可能回退FFmpeg loudnorm内置dynamic模式，不另加压缩/增强滤镜；原曲试听不做此处理。数字静音逐样验证为0后原样保留；非静音但测量无效/过短则报错，让用户关闭均衡重试。滤镜输出长度不符即拒绝。
 
-正式输出先results/UUID.part，native成功关闭后检查非零、真实probe为MP3且有正时长/有效声道采样率，再fsync。确认协程仍有效后进入NonCancellable提交：重命名UUID.mp3、原子保存索引并发布真实结果。名称不含扩展名，非法字符清理、同名自动加(2)等，实体UUID从不覆盖。登记失败删除未引用正式文件；进程中断残留由下次有效加载回收。提交临界区收到取消仍完成登记并保留成果。UI成功面板留当前模块，阶段7管理操作仍如实未开放。
+正式输出仍先results/UUID.part，真实MP3 probe与fsync后，NonCancellable中持目标引用、rename、原子登记并发布。登记失败回收未引用文件，启动处理残留；提交区取消保留成果。UI成功面板留当前模块，可直接试听真实成品、另存和查看成果库；进入库时选全部以看见新成果，关闭面板不删除文件。
 
 PCM为48kHz双声道float32，约384KB/秒，导出预估全部PCM+均衡时最大单曲额外PCM+MP3+32MiB空间；不足或实际写失败不登记。处理总时间线最多24小时、每曲最多100000片段、最多4096首、源最多32声道/384kHz；波形仍8小时。容器尾时长最多100ms padding差允许实际缩短，绝不凭空补尾；更大的提前EOF失败。PTS空隙用真实呈现时间上的0采样补齐、重叠丢弃重复，缺PTS连续累计。Media3、原生PTS/priming、MP3编码延迟不同，不能宣称逐采样一致或所有设备绝对无缝。
 
@@ -181,4 +201,4 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 - https://developer.android.com/media/media3/exoplayer/playlists
 - https://github.com/androidx/media/blob/1.7.1/libraries/common/src/main/java/androidx/media3/common/MediaItem.java （核对微秒裁剪API）
 
-阶段4应用0.2.0/code2、阶段5为0.3.0/code3；阶段6为0.4.0/code4，全部工具与既有依赖不变。
+阶段4应用0.2.0/code2、阶段5为0.3.0/code3、阶段6为0.4.0/code4；阶段7为0.5.0/code5，全部工具与既有依赖不变。

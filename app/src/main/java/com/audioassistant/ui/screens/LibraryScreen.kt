@@ -42,12 +42,15 @@ import com.audioassistant.ui.components.PrimaryActionButton
 import com.audioassistant.ui.components.SectionHeader
 import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.formatTime
+import com.audioassistant.ui.components.formatSize
+import com.audioassistant.playback.ResultPlaybackSummary
 import com.audioassistant.ui.theme.AppSpacing
 
 @Composable
 fun LibraryScreen(
     results: List<ResultItemUi>, category: ResultCategory, onCategory: (ResultCategory) -> Unit,
     onMakeAudio: () -> Unit, isLoading: Boolean = false, onAction: (String, String) -> Unit,
+    enabled: Boolean = true, playback: ResultPlaybackSummary = ResultPlaybackSummary(),
 ) {
     val filtered = results.filter { category == ResultCategory.ALL || it.category == category }
     Column(Modifier.fillMaxSize()) {
@@ -78,13 +81,13 @@ fun LibraryScreen(
                     else TextAction("查看全部成果", AppIcon.LIBRARY, { onCategory(ResultCategory.ALL) })
                 }
             } else if (filtered.isNotEmpty()) item { SectionHeader("已保存音频", "${filtered.size} 个文件", AppIcon.AUDIO) }
-            items(filtered, key = { it.id }) { result -> ResultCard(result, onAction) }
+            items(filtered, key = { it.id }) { result -> ResultCard(result, onAction, enabled, playback) }
         }
     }
 }
 
 @Composable
-private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit) {
+private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit, enabled: Boolean, playback: ResultPlaybackSummary) {
     var expanded by rememberSaveable(result.id) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
@@ -93,11 +96,15 @@ private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit)
             IconBadge(AppIcon.AUDIO, FeatureTone.PURPLE, 40.dp)
             Column(Modifier.weight(1f).padding(start = AppSpacing.small)) {
                 Text(result.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${formatTime(result.durationUs)} · MP3", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${formatTime(result.durationUs)} · MP3 · ${formatSize(result.sizeBytes)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                result.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
-            TextAction("试听", AppIcon.PLAY, { onAction(result.id, "试听成果") })
+            val active = playback.id == result.id
+            TextAction(if (active && playback.loading) "准备中" else if (active && playback.playing) "暂停" else "试听",
+                if (active && playback.playing) AppIcon.PAUSE else AppIcon.PLAY, { onAction(result.id, "试听成果") },
+                enabled = enabled && result.error == null && !(active && playback.loading))
             Column {
-                IconButton(onClick = { expanded = true }) { AppGlyph(AppIcon.MORE, "${result.name}的更多操作") }
+                IconButton(onClick = { expanded = true }, enabled = enabled) { AppGlyph(AppIcon.MORE, "${result.name}的更多操作") }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     listOf(
                         Triple("重命名", AppIcon.EDIT, "重命名"), Triple("分享", AppIcon.SHARE, "分享"),
@@ -105,6 +112,7 @@ private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit)
                         Triple("删除", AppIcon.DELETE, "删除"),
                     ).forEach { (label, icon, action) ->
                         DropdownMenuItem(text = { Text(label) }, leadingIcon = { AppGlyph(icon) },
+                            enabled = enabled && (result.error == null || action in listOf("重命名", "删除")),
                             onClick = { expanded = false; onAction(result.id, action) })
                     }
                 }

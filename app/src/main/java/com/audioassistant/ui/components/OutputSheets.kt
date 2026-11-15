@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.audioassistant.ui.ResultItemUi
 import com.audioassistant.ui.WorkspaceUiState
 import com.audioassistant.ui.theme.AppSpacing
+import com.audioassistant.playback.ResultPlaybackSummary
 
 @Composable
 fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize: (Boolean) -> Unit, onClose: () -> Unit, onStart: () -> Unit) {
@@ -139,14 +140,18 @@ private fun ConversionNameField(name: String, onName: (String) -> Unit) {
 
 /** 仍仅供真实成果事件调用，不创建成功状态或模拟文件。 */
 @Composable
-fun SuccessOptions(result: ResultItemUi, onAction: (String) -> Unit, onLibrary: () -> Unit, onClose: () -> Unit) {
+fun SuccessOptions(result: ResultItemUi, onAction: (String) -> Unit, onLibrary: () -> Unit, onClose: () -> Unit,
+    playback: ResultPlaybackSummary = ResultPlaybackSummary(), enabled: Boolean = true) {
     Column {
         SheetHeader("音频已保存", AppIcon.CHECK, onClose)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(AppSpacing.page), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
             Text(result.name, style = MaterialTheme.typography.titleMedium)
             NoteRow("关闭此面板不会删除内部成果", AppIcon.CHECK)
-            PrimaryActionButton("试听", AppIcon.PLAY, { onAction("试听成果") }, Modifier.fillMaxWidth())
-            SecondaryActionButton("另存到 U 盘", AppIcon.USB, { onAction("另存到 U 盘") }, Modifier.fillMaxWidth())
+            PrimaryActionButton(if (playback.id == result.id && playback.playing) "暂停试听" else "试听",
+                if (playback.id == result.id && playback.playing) AppIcon.PAUSE else AppIcon.PLAY,
+                { onAction("试听成果") }, Modifier.fillMaxWidth(), enabled && !(playback.id == result.id && playback.loading))
+            if (playback.id == result.id && playback.error != null) NoteRow(playback.error, AppIcon.ERROR)
+            SecondaryActionButton("另存到 U 盘", AppIcon.USB, { onAction("另存到 U 盘") }, Modifier.fillMaxWidth(), enabled)
             TextAction("查看成果库", AppIcon.LIBRARY, onLibrary, Modifier.fillMaxWidth())
         }
     }

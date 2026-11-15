@@ -7,6 +7,12 @@ import androidx.lifecycle.viewModelScope
 import com.audioassistant.data.FileWorkspaceRepository
 import com.audioassistant.data.MediaImporter
 import com.audioassistant.data.PreparedSource
+import com.audioassistant.data.LibraryRepository
+import com.audioassistant.data.ResultFileService
+import com.audioassistant.data.SaveLocation
+import com.audioassistant.data.SharePayload
+import com.audioassistant.data.UriGrantLedger
+import com.audioassistant.playback.ResultPreview
 import com.audioassistant.model.AudioSegment
 import com.audioassistant.model.ExportSettings
 import com.audioassistant.model.ResultOrigin
@@ -25,6 +31,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class VideoItemUi(
@@ -37,7 +45,13 @@ data class SongItemUi(
     val error: String? = null,
 )
 enum class ResultCategory(val label: String) { ALL("全部"), VIDEO("视频转换"), MERGE("拼接成果") }
-data class ResultItemUi(val id: String, val name: String, val durationUs: Long, val category: ResultCategory)
+data class ResultItemUi(
+    val id: String, val name: String, val durationUs: Long, val category: ResultCategory,
+    val sizeBytes: Long? = null, val error: String? = null, val inProject: Boolean = false,
+)
+enum class ResultDialogKind { RENAME, DELETE }
+data class ResultDialogUi(val id: String, val kind: ResultDialogKind)
+data class FileOperationUi(val generation: Long, val label: String, val fraction: Float = 0f, val cancelling: Boolean = false)
 enum class AppSheet { VIDEO_NAMES, EXPORT, MORE_EDIT }
 data class UiNotice(val title: String, val message: String)
 enum class ProcessingKind { VIDEO, EXPORT }
@@ -53,6 +67,8 @@ data class WorkspaceUiState(
     val loadingMessage: String? = "正在读取最近项目…", val errorMessage: String? = null,
     val ready: Boolean = false, val isWorking: Boolean = false, val isReordering: Boolean = false, val cancelDragSignal: Int = 0,
     val processing: ProcessingUi? = null,
+    val resultDialog: ResultDialogUi? = null, val saveTarget: String? = null,
+    val saveLocation: SaveLocation? = null, val pendingShare: SharePayload? = null,
     // 仅真实文件完成并原子登记后赋值。
     val completedResult: ResultItemUi? = null,
 )
@@ -60,10 +76,19 @@ data class WorkspaceUiState(
 /** Activity 作用域；唯一写入队列串行处理导入/排序/设置，IO 在 Repository/Importer 内切换。 */
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = FileWorkspaceRepository(application)
-    private val importer = MediaImporter(application, repository)
+    private val grants = UriGrantLedger(application)
+    private val importer = MediaImporter(application, repository, grants)
+    private val library = LibraryRepository(repository)
     private var processingJob: Job? = null
     private var processingSequence = 0L
     private val mutableState = MutableStateFlow(WorkspaceUiState())
+    private val resultFiles = ResultFileService(application, repository, grants) { message ->
+        mutableState.update { it.copy(notice = UiNotice("文件清理提示", message)) }
+    }
+    private val mutableFileOperation = MutableStateFlow<FileOperationUi?>(null)
+    val fileOperation = mutableFileOperation.asStateFlow()
+    private var fileJob: Job? = null
+    private var fileSequence = 0L
     private val processingService = AudioProcessingService(application, repository) { message ->
         mutableState.update { it.copy(notice = UiNotice("临时文件清理", message)) }
     }
@@ -71,17 +96,26 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val commands = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private var pending = 0
     val editor = AudioEditor(application, repository, viewModelScope, ::renderProject)
+    val resultPreview = ResultPreview(application, repository, viewModelScope, ::reportError)
     private var sourceErrors: Map<String, String> = emptyMap()
+    private var resultErrors: Map<String, String> = emptyMap()
 
     init {
         viewModelScope.launch {
             try {
                 repository.load()
+                val location = try { resultFiles.lastLocation() } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                mutableState.update { it.copy(saveLocation = location) }
                 if (!repository.cleanupProcessingResidue()) reportError("部分上次未完成的处理文件暂未清理，将在下次打开时重试。")
+                if (!resultFiles.cleanupShares(startup = true)) reportError("部分过期分享副本暂未清理")
                 checkSources()
+                resultErrors = library.errors()
+                try { reconcileGrants() } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { reportError("部分无引用授权暂未释放，有效项目授权会保留。") }
                 renderProject()
                 mutableState.update { it.copy(ready = true, exportSettings = repository.snapshot.value.project.exportSettings, loadingMessage = if (pending > 0) "正在处理已选择的文件…" else null) }
-                if (!repository.cleanupSources()) reportError("部分无引用副本未能清理，下次打开时会重试。")
+                if (!cleanupWorkspaceFiles()) reportError("部分无引用副本未能清理，下次打开时会重试。")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 mutableState.update { it.copy(ready = false, loadingMessage = null, errorMessage = "最近项目无法读取：${error.message ?: error.javaClass.simpleName}。原文件已保留，已停止项目写入；请保留数据并反馈此提示。") }
@@ -91,7 +125,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun enqueue(label: String, action: suspend () -> Unit) {
-        if (state.value.processing != null) { reportError("音频正在处理中，请完成或取消后再修改列表。") ; return }
+        if (state.value.processing != null || fileJob != null) { reportError("文件正在处理中，请完成或取消后再修改列表。") ; return }
         // ActivityResult 可能在进程重建、项目加载完成前送达；先排队，读取失败时再拒绝写入。
         if (!state.value.ready && state.value.loadingMessage == null) {
             reportError("最近项目尚未正确读取，已停止写入，请重新打开应用并保留错误提示。")
@@ -110,6 +144,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 renderProject()
                 reportError("操作未保存：${error.message ?: "文件读写失败"}。已有项目文件没有被覆盖为无效数据。")
             } finally {
+                try { if (state.value.ready) reconcileGrants() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { reportError("部分无引用授权暂未释放，有效项目授权会保留。") }
                 pending--
                 if (pending == 0) mutableState.update { it.copy(isWorking = false, loadingMessage = null) }
             }
@@ -125,8 +162,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 SongItemUi(song.id, source.displayName, source.originalDurationUs,
                     song.segments.fold(0L) { total, segment -> Math.addExact(total, segment.durationUs) }, sourceErrors[source.id])
             },
-            results = snapshot.results.map { result -> ResultItemUi(result.id, result.displayName, result.durationUs,
-                if (result.origin == ResultOrigin.VIDEO) ResultCategory.VIDEO else ResultCategory.MERGE) },
+            results = snapshot.results.map { it.ui() },
+            completedResult = old.completedResult?.let { completed -> snapshot.results.firstOrNull { it.id == completed.id }?.ui() },
+            saveTarget = old.saveTarget?.takeIf { id -> snapshot.results.any { it.id == id } },
+            resultDialog = old.resultDialog?.takeIf { dialog -> snapshot.results.any { it.id == dialog.id } },
         ) }
     }
 
@@ -135,7 +174,21 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             .associate { it.id to "源文件不可用，可能已移动、断开连接或读取授权失效。请重新选择该文件，或从项目移除。" }
     }
 
-    fun refreshSources() { if (state.value.processing == null) enqueue("正在检查源文件…") { checkSources(); renderProject() } }
+    private suspend fun reconcileGrants() {
+        val protectedUris = repository.snapshot.value.project.sources.filter { it.storage == SourceStorage.PERSISTED_URI }.map { it.location }.toSet() +
+            state.value.videos.map { it.uri } + listOfNotNull(state.value.saveLocation?.uri)
+        grants.releaseUnused(protectedUris)
+    }
+
+    private suspend fun cleanupWorkspaceFiles(): Boolean {
+        val sources = repository.cleanupSources()
+        val results = repository.cleanupResults()
+        return sources && results
+    }
+
+    fun refreshSources() { if (state.value.processing == null && fileJob == null) enqueue("正在检查文件…") {
+        checkSources(); resultErrors = library.errors(); renderProject()
+    } }
 
     fun importVideos(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -177,13 +230,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) { messages += "歌曲未添加：${error.message ?: "无法读取或保存文件"}" }
                 finally {
-                    prepared?.let { candidate -> withContext(NonCancellable) { importer.discard(candidate, state.value.videos.map { it.uri }.toSet()) } }
+                    prepared?.let { candidate -> withContext(NonCancellable) { importer.discard(candidate) } }
                 }
             }
             checkSources()
             renderProject()
             showImportMessages(messages)
-            if (!repository.cleanupSources()) reportError("部分无引用副本暂未清理，下次打开会重试。")
+            if (!cleanupWorkspaceFiles()) reportError("部分无引用副本暂未清理，下次打开会重试。")
         }
     }
 
@@ -207,19 +260,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             repository.update { current -> current.copy(project = current.project.copy(
                 sources = current.project.sources.map { if (it.id == old.id) replacement.source else it },
             )) }
-        } finally { withContext(NonCancellable) { importer.discard(replacement, state.value.videos.map { it.uri }.toSet()) } }
+        } finally { withContext(NonCancellable) { importer.discard(replacement) } }
         checkSources()
         renderProject()
-        if (state.value.videos.none { it.uri == old.location }) importer.discard(PreparedSource(old, newlyGranted = true))
-        if (!repository.cleanupSources()) reportError("源文件已重新关联；部分旧副本暂未清理。")
+        importer.discard(PreparedSource(old))
+        if (!cleanupWorkspaceFiles()) reportError("源文件已重新关联；部分旧副本暂未清理。")
     }
 
     private fun showImportMessages(messages: List<String>) {
         if (messages.isNotEmpty()) mutableState.update { it.copy(notice = UiNotice("导入提示", messages.take(6).joinToString("\n") + if (messages.size > 6) "\n另有 ${messages.size - 6} 项未添加" else "")) }
     }
 
-    fun removeVideo(id: String) {
-        if (state.value.processing != null) return
+    fun removeVideo(id: String) = enqueue("正在移除视频…") {
         mutableState.update { it.copy(videos = it.videos.filterNot { video -> video.id == id }, videoNames = it.videoNames - id) }
     }
 
@@ -233,14 +285,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
         renderProject()
         previous.filter { old -> repository.snapshot.value.project.sources.none { it.id == old.id } }.forEach { source ->
-            // 视频会话仍用到同一 URI 时，保守保留其读取授权。
-            if (state.value.videos.none { it.uri == source.location }) importer.discard(PreparedSource(source, newlyGranted = true))
+            // URI账本会保护项目、视频队列与最近保存目录；这里只清内部实体。
+            importer.discard(PreparedSource(source))
         }
-        if (!repository.cleanupSources()) reportError("歌曲已移除；部分无引用内部副本暂未清理，下次打开会重试。")
+        if (!cleanupWorkspaceFiles()) reportError("歌曲已移除；部分无引用内部副本暂未清理，下次打开会重试。")
     }
 
     fun reorderSongs(ids: List<String>) {
-        if (state.value.processing != null) return
+        if (state.value.processing != null || fileJob != null) return
         val current = state.value.songs
         if (ids == current.map { it.id }) return
         if (ids.size != current.size || ids.toSet() != current.map { it.id }.toSet()) return
@@ -277,7 +329,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         require(file.isFile && file.length() == result.sizeBytes) { "成果文件缺失或大小已改变" }
         val project = repository.snapshot.value.project
         require(project.sources.none { it.storage == SourceStorage.INTERNAL_FILE && it.location == result.relativePath }) { "该成果已在歌曲列表中" }
-        val source = SourceReference(UUID.randomUUID().toString(), result.displayName, SourceStorage.INTERNAL_FILE, result.relativePath, result.durationUs)
+        val source = SourceReference(UUID.randomUUID().toString(), result.displayName, SourceStorage.INTERNAL_FILE, result.relativePath,
+            result.durationUs, mimeType = "audio/mpeg", sizeBytes = result.sizeBytes)
         repository.update { current -> current.copy(project = current.project.copy(
             sources = current.project.sources + source,
             songs = current.project.songs + SongEdit(UUID.randomUUID().toString(), source.id, listOf(AudioSegment(source.id, 0, source.originalDurationUs))),
@@ -286,7 +339,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun showSheet(sheet: AppSheet) {
-        if (state.value.processing != null) return
+        if (state.value.processing != null || fileJob != null) return
         mutableState.update { current -> current.copy(sheet = sheet, videoNames = if (sheet == AppSheet.VIDEO_NAMES) current.videos.associate { video ->
             video.id to (current.videoNames[video.id] ?: video.name.substringBeforeLast('.', video.name))
         } else current.videoNames) }
@@ -313,7 +366,80 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         it.ready && !it.isWorking && !it.isReordering && it.processing == null && processingJob == null
     }
     private fun LibraryRecord.ui() = ResultItemUi(id, displayName, durationUs,
-        if (origin == ResultOrigin.VIDEO) ResultCategory.VIDEO else ResultCategory.MERGE)
+        if (origin == ResultOrigin.VIDEO) ResultCategory.VIDEO else ResultCategory.MERGE, sizeBytes, resultErrors[id],
+        repository.snapshot.value.project.sources.any { it.storage == SourceStorage.INTERNAL_FILE && it.location == relativePath })
+
+    fun onResultAction(id: String, action: String) {
+        if (!state.value.ready || state.value.isWorking || state.value.isReordering) { reportError("正在处理文件，请稍后再试"); return }
+        val item = state.value.results.firstOrNull { it.id == id } ?: run { reportError("成果已移除"); return }
+        when (action) {
+            "试听成果" -> { editor.pauseForBackground(); editor.stopWorkspacePreview(); resultPreview.toggle(id) }
+            "重命名" -> mutableState.update { it.copy(resultDialog = ResultDialogUi(id, ResultDialogKind.RENAME), errorMessage = null) }
+            "删除" -> mutableState.update { it.copy(resultDialog = ResultDialogUi(id, ResultDialogKind.DELETE)) }
+            "分享" -> startFileOperation("正在准备分享副本") { report ->
+                val payload = resultFiles.prepareShare(id, report)
+                currentCoroutineContext().ensureActive()
+                mutableState.update { it.copy(pendingShare = payload) }
+            }
+            "另存", "另存到 U 盘" -> mutableState.update { it.copy(saveTarget = item.id, sheet = null, completedResult = null, errorMessage = null) }
+            "添加到拼接" -> addResultToProject(id)
+        }
+    }
+
+    fun closeResultDialog() { mutableState.update { it.copy(resultDialog = null) } }
+    fun renameResult(id: String, name: String) = enqueue("正在重命名成果…") {
+        library.rename(id, name)
+        renderProject()
+        state.value.results.firstOrNull { it.id == id }?.let { resultPreview.renamed(id, it.name) }
+        closeResultDialog()
+    }
+    fun deleteResult(id: String) {
+        resultPreview.stop(id)
+        enqueue("正在移除成果…") {
+            val outcome = library.remove(id)
+            closeResultDialog(); resultErrors = library.errors(); renderProject()
+            if (!outcome.cleaned) mutableState.update { it.copy(notice = UiNotice("已从成果库移除", "部分无引用内部文件暂未能删除，将在稍后清理。项目引用文件与外部副本仍保留。")) }
+            else if (outcome.retained) mutableState.update { it.copy(notice = UiNotice("已从成果库移除", "该文件仍被项目或正在进行的操作引用，暂时保留；引用释放后再清理。外部副本不受影响。")) }
+        }
+    }
+    fun closeSaveOptions() { mutableState.update { it.copy(saveTarget = null) } }
+    fun rememberSaveLocation(uri: Uri, flags: Int) = enqueue("正在记录保存位置…") {
+        val location = resultFiles.rememberLocation(uri, flags)
+        mutableState.update { it.copy(saveLocation = location) }
+    }
+    fun consumeShare(token: String) { mutableState.update { if (it.pendingShare?.token == token) it.copy(pendingShare = null) else it } }
+
+    private fun startFileOperation(label: String, retryTarget: String? = null, operation: suspend ((com.audioassistant.data.FileCopyProgress) -> Unit) -> Unit) {
+        if (!canProcess() || fileJob != null) return
+        val generation = ++fileSequence
+        mutableFileOperation.value = FileOperationUi(generation, label)
+        mutableState.update { it.copy(isWorking = true, saveTarget = null, completedResult = null, errorMessage = null) }
+        fileJob = viewModelScope.launch {
+            try {
+                operation { progress -> mutableFileOperation.update { current ->
+                    if (current == null || current.generation != generation || current.cancelling) current
+                    else current.copy(label = progress.label, fraction = progress.fraction)
+                } }
+            } catch (_: CancellationException) { reportError("已取消文件操作；内部成果仍保留。已核对完成的外部副本不会因取消被删除。") }
+            catch (error: Exception) { mutableState.update { it.copy(errorMessage = error.message ?: "文件操作失败，内部成果仍保留",
+                saveTarget = retryTarget?.takeIf { id -> it.results.any { result -> result.id == id } }) } }
+            finally {
+                mutableFileOperation.value = null
+                mutableState.update { it.copy(isWorking = pending > 0) }
+                fileJob = null
+            }
+        }
+    }
+    fun saveResultCopy(id: String) {
+        val location = state.value.saveLocation ?: run { reportError("请先选择保存位置"); return }
+        startFileOperation("正在准备另存", retryTarget = id) { progress -> resultFiles.saveCopy(id, location, progress) { copied ->
+            mutableState.update { it.copy(notice = UiNotice("另存完成", "已将 ${copied.name} 复制到 ${copied.location}。内容已核对，内部成果仍保留。")) }
+        } }
+    }
+    fun cancelFileOperation() {
+        mutableFileOperation.update { it?.copy(cancelling = true, label = "正在取消并清理本次副本…") }
+        fileJob?.cancel()
+    }
 
     fun startConversions(onlyId: String? = null) {
         if (!canProcess()) return
@@ -413,5 +539,5 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun dismissError() { mutableState.update { it.copy(errorMessage = null) } }
     fun dismissNotice() { mutableState.update { it.copy(notice = null) } }
     fun dismissSuccess() { mutableState.update { it.copy(completedResult = null) } }
-    override fun onCleared() { processingJob?.cancel(); processingService.close(); editor.release(); super.onCleared() }
+    override fun onCleared() { fileJob?.cancel(); resultPreview.release(); processingJob?.cancel(); processingService.close(); editor.release(); super.onCleared() }
 }
