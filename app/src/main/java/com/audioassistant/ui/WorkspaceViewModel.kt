@@ -52,7 +52,7 @@ data class ResultItemUi(
 enum class ResultDialogKind { RENAME, DELETE }
 data class ResultDialogUi(val id: String, val kind: ResultDialogKind)
 data class FileOperationUi(val generation: Long, val label: String, val fraction: Float = 0f, val cancelling: Boolean = false)
-enum class AppSheet { VIDEO_NAMES, EXPORT, MORE_EDIT }
+enum class AppSheet { VIDEO_NAMES, EXPORT, MORE_EDIT, IMPORT_RESULTS }
 data class UiNotice(val title: String, val message: String)
 enum class ProcessingKind { VIDEO, EXPORT }
 data class ProcessingUi(

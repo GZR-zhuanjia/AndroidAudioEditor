@@ -206,3 +206,7 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 ## 0.5.1 标准交互覆盖说明
 
 本节覆盖历史阶段4的手写导航颜色动画和150/100ms页面淡化选择。底栏改用标准 Material3 NavigationBar/NavigationBarItem，保留默认交互与安全区；NavHost 不额外淡化页面，顶部标题和内容随同一路由更新。ModalBottomSheet 显式关闭和提交先完成标准 hide，再执行状态更新/业务回调，协程挂在稳定宿主作用域。主题、共享卡片/表单/标题/列表调整为中性黑灰与局部强调。无新依赖，不改文件和音频架构。
+
+## 0.5.2 工作区成果选择
+
+剪辑页空/有歌曲的“从成果库添加”统一打开AppSheet.IMPORT_RESULTS与ResultImportOptions，消费同一WorkspaceUiState.results。点文件复用AppModalSheet.finish收起后调用既有addResultToProject，不改变路由；存储仍验证实体/大小、拒绝重复、直接引用并原子保存。列表独立滚动，空库/已添加/失效状态来自真实数据。没有修改0.5.1主题/导航/动画。

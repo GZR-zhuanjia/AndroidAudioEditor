@@ -59,6 +59,7 @@ import com.audioassistant.ui.components.StateBanner
 import com.audioassistant.ui.components.SuccessOptions
 import com.audioassistant.ui.components.TextAction
 import com.audioassistant.ui.components.VideoNameOptions
+import com.audioassistant.ui.components.ResultImportOptions
 import com.audioassistant.ui.components.ResultPlayerDock
 import com.audioassistant.ui.components.FileOperationDock
 import com.audioassistant.ui.components.SaveCopyOptions
@@ -187,7 +188,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     EditWorkspaceScreen(
                         songs = state.songs, enabled = state.ready && !state.isWorking && !preview.busy, cancelDragSignal = state.cancelDragSignal,
                         onImport = { launchPicker { audioFiles.launch(arrayOf("audio/*")) } },
-                        onLibrary = { navigateTo(Destination.LIBRARY) },
+                        onLibrary = { workspace.showSheet(AppSheet.IMPORT_RESULTS) },
                         onEditor = { songId -> workspace.resultPreview.stop(); nav.navigate("editor?songId=${Uri.encode(songId.orEmpty())}") { launchSingleTop = true } },
                         onExport = { workspace.showSheet(AppSheet.EXPORT) },
                         onOrder = workspace::reorderSongs, onMove = workspace::moveSong,
@@ -274,6 +275,11 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                     { finish { workspace.startConversions() } })
                 AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, close,
                     { finish { workspace.startExport() } })
+                AppSheet.IMPORT_RESULTS -> ResultImportOptions(state.results, state.ready && !state.isWorking,
+                    onPick = { id -> finish {
+                        workspace.closeSheet()
+                        workspace.addResultToProject(id)
+                    } }, onClose = close)
                 AppSheet.MORE_EDIT -> {
                     val editor by workspace.editor.state.collectAsStateWithLifecycle()
                     EditorOptions(editor, close, workspace.editor::act, workspace.editor::inputBoundary,
