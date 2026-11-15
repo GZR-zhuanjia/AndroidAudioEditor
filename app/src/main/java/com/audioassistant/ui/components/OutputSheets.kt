@@ -33,7 +33,7 @@ import com.audioassistant.ui.WorkspaceUiState
 import com.audioassistant.ui.theme.AppSpacing
 
 @Composable
-fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize: (Boolean) -> Unit, onClose: () -> Unit) {
+fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize: (Boolean) -> Unit, onClose: () -> Unit, onStart: () -> Unit) {
     val name = state.exportSettings.baseName
     Column {
         SheetHeader("导出拼接音频", AppIcon.DOWNLOAD, onClose)
@@ -72,8 +72,8 @@ fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize
             NoteRow("普通试听不代表响度均衡后的效果")
         }
         ActionDock {
-            NoteRow("导出暂未开放 · 设置自动保存")
-            PrimaryActionButton("开始导出", AppIcon.DOWNLOAD, {}, Modifier.fillMaxWidth(), false)
+            PrimaryActionButton("开始导出", AppIcon.DOWNLOAD, onStart, Modifier.fillMaxWidth(),
+                state.ready && !state.isWorking && name.isNotBlank() && state.songs.isNotEmpty() && state.songs.all { it.error == null && it.editedDurationUs > 0 })
         }
     }
 }
@@ -88,7 +88,8 @@ private fun SummaryRow(label: String, value: String, icon: AppIcon) {
 }
 
 @Composable
-fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, onClose: () -> Unit) {
+fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, onClose: () -> Unit, onStart: () -> Unit) {
+    val videos = state.videos.filter { it.status != "已完成" }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // 仅批量列表设高度上限；单文件由一个输入框的实际高度决定，不要求展开到屏幕比例。
         val batchMaxHeight = (maxHeight * 0.55f).coerceAtMost(360.dp)
@@ -96,16 +97,16 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, 
             SheetHeader("转换设置与命名", AppIcon.VIDEO, onClose)
             Text("输出格式：MP3", Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.xSmall),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state.videos.size <= 1) {
+            if (videos.size <= 1) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = AppSpacing.page, vertical = AppSpacing.small)) {
-                    val video = state.videos.singleOrNull()
+                    val video = videos.singleOrNull()
                     if (video == null) Text("请先添加需要转换的视频。", style = MaterialTheme.typography.bodyMedium)
                     else ConversionNameField(state.videoNames[video.id].orEmpty(), { onName(video.id, it) })
                 }
             } else {
                 LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = batchMaxHeight),
                     contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-                    itemsIndexed(state.videos, key = { _, video -> video.id }) { index, video ->
+                    itemsIndexed(videos, key = { _, video -> video.id }) { index, video ->
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
                             Text("${index + 1}. ${video.name}", style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -116,8 +117,8 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, 
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.medium),
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
-                Text("转换功能暂未开放", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                PrimaryActionButton("开始转换", AppIcon.VIDEO, {}, Modifier.fillMaxWidth(), false)
+                PrimaryActionButton("开始转换", AppIcon.VIDEO, onStart, Modifier.fillMaxWidth(),
+                    state.ready && !state.isWorking && videos.isNotEmpty() && videos.all { !state.videoNames[it.id].isNullOrBlank() })
             }
         }
     }

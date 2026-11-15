@@ -3,6 +3,7 @@ package com.audioassistant.engine
 import android.content.Context
 import android.net.Uri
 import androidx.annotation.Keep
+import com.audioassistant.model.AudioSegment
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
@@ -17,6 +18,10 @@ interface NativeAudioEngine : Closeable {
     suspend fun probe(input: Uri): NativeProbe
     suspend fun analyze(input: Uri, output: File, onProgress: (Long, Long) -> Unit)
     suspend fun versions(): String
+    suspend fun convertMp3(input: Uri, output: File, onProgress: (Long, Long) -> Unit): Boolean
+    suspend fun renderSong(input: Uri, parts: List<AudioSegment>, output: File, onProgress: (Long, Long) -> Unit): Long
+    suspend fun normalizeSong(input: File, output: File, onProgress: (Long, Long) -> Unit): String
+    suspend fun encodeMp3(inputs: List<File>, output: File, onProgress: (Long, Long) -> Unit)
 }
 
 /** -1 表示容器未给出时长；不会用猜测值冒充探测结果。 */
@@ -37,6 +42,10 @@ internal object NativeBridge {
     external fun probe(id: Long, fd: Int, offset: Long, size: Long): NativeProbe
     external fun analyze(id: Long, fd: Int, offset: Long, size: Long, output: String, progress: NativeProgress)
     external fun versions(): String
+    external fun convertMp3(id: Long, fd: Int, offset: Long, size: Long, output: String, progress: NativeProgress): Boolean
+    external fun renderSong(id: Long, fd: Int, offset: Long, size: Long, starts: LongArray, ends: LongArray, output: String, progress: NativeProgress): Long
+    external fun normalizeSong(id: Long, input: String, output: String, progress: NativeProgress): String
+    external fun encodeMp3(id: Long, inputs: Array<String>, output: String, progress: NativeProgress)
 }
 
 /** 单个原生工作线程；取消回调直接设置 native atomic 标记，不等待阻塞 JNI 返回。 */
@@ -87,6 +96,25 @@ class JniNativeAudioEngine(context: Context) : NativeAudioEngine {
         }
     }
     override suspend fun versions(): String = task { NativeBridge.versions() }
+    override suspend fun convertMp3(input: Uri, output: File, onProgress: (Long, Long) -> Unit): Boolean = task { id ->
+        (resolver.openAssetFileDescriptor(input, "r") ?: throw IOException("无法打开已授权视频")).use { file ->
+            NativeBridge.convertMp3(id, file.parcelFileDescriptor.fd, file.startOffset, file.declaredLength,
+                output.absolutePath, NativeProgress(onProgress))
+        }
+    }
+    override suspend fun renderSong(input: Uri, parts: List<AudioSegment>, output: File, onProgress: (Long, Long) -> Unit): Long = task { id ->
+        (resolver.openAssetFileDescriptor(input, "r") ?: throw IOException("无法打开已授权歌曲")).use { file ->
+            NativeBridge.renderSong(id, file.parcelFileDescriptor.fd, file.startOffset, file.declaredLength,
+                parts.map { it.sourceStartUs }.toLongArray(), parts.map { it.sourceEndUs }.toLongArray(),
+                output.absolutePath, NativeProgress(onProgress))
+        }
+    }
+    override suspend fun normalizeSong(input: File, output: File, onProgress: (Long, Long) -> Unit): String = task { id ->
+        NativeBridge.normalizeSong(id, input.absolutePath, output.absolutePath, NativeProgress(onProgress))
+    }
+    override suspend fun encodeMp3(inputs: List<File>, output: File, onProgress: (Long, Long) -> Unit) = task { id ->
+        NativeBridge.encodeMp3(id, inputs.map { it.absolutePath }.toTypedArray(), output.absolutePath, NativeProgress(onProgress))
+    }
     override fun close() {
         closed = true
         active.get().takeIf { it != 0L }?.let(NativeBridge::cancelTask)

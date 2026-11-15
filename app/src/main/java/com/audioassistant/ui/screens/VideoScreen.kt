@@ -21,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.audioassistant.ui.VideoItemUi
+import com.audioassistant.ui.ProcessingUi
+import com.audioassistant.ui.ProcessingKind
+import com.audioassistant.ui.components.ProcessingStatus
 import com.audioassistant.ui.components.ActionDock
 import com.audioassistant.ui.components.ActionPair
 import com.audioassistant.ui.components.AppGlyph
@@ -40,7 +43,8 @@ import com.audioassistant.ui.theme.AppSpacing
 @Composable
 fun VideoScreen(
     videos: List<VideoItemUi>, enabled: Boolean, onPhoto: () -> Unit, onFiles: () -> Unit,
-    onSettings: () -> Unit, onRemove: (String) -> Unit, onUnavailable: (String) -> Unit,
+    onSettings: () -> Unit, onRemove: (String) -> Unit, onRetry: (String) -> Unit,
+    processing: ProcessingUi?, onCancel: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         if (videos.isNotEmpty()) Column(Modifier.padding(horizontal = AppSpacing.page)) {
@@ -55,16 +59,19 @@ fun VideoScreen(
                 EmptyState("添加需要转换的视频", "选择一个或多个视频，成果保存到成果库。", icon = AppIcon.VIDEO, tone = FeatureTone.BLUE) {
                     PrimaryActionButton("从相册选择", AppIcon.PHOTO, onPhoto, Modifier.fillMaxWidth(), enabled)
                     SecondaryActionButton("从文件中选择", AppIcon.FOLDER, onFiles, Modifier.fillMaxWidth(), enabled)
-                    NoteRow("默认 MP3 · 转换功能暂未开放")
+                    NoteRow("默认 MP3 · 成果自动保存")
                 }
             }
             items(videos, key = { it.id }) { video ->
-                VideoFileItem(video, enabled, { onRemove(video.id) }, { onUnavailable("重试转换") })
+                VideoFileItem(video, enabled, { onRemove(video.id) }, { onRetry(video.id) })
             }
         }
         if (videos.isNotEmpty()) ActionDock {
-            NoteRow("${videos.size} 个视频 · 转换暂未开放")
-            PrimaryActionButton("转换设置与命名", AppIcon.TUNE, onSettings, Modifier.fillMaxWidth(), enabled)
+            if (processing?.kind == ProcessingKind.VIDEO) ProcessingStatus(processing, onCancel)
+            else {
+                NoteRow("${videos.size} 个视频 · 成功后自动加入成果库")
+                PrimaryActionButton("转换设置与命名", AppIcon.TUNE, onSettings, Modifier.fillMaxWidth(), enabled && videos.any { it.status != "已完成" })
+            }
         }
     }
 }
@@ -92,7 +99,7 @@ private fun VideoFileItem(video: VideoItemUi, enabled: Boolean, onRemove: () -> 
                 Row(Modifier.padding(end = AppSpacing.small), horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
                     val statusIcon = when {
                         video.error != null -> AppIcon.ERROR
-                        video.progress != null -> AppIcon.WAVE
+                        video.isProcessing -> AppIcon.WAVE
                         video.status == "已完成" -> AppIcon.CHECK
                         else -> AppIcon.HISTORY
                     }
@@ -102,9 +109,10 @@ private fun VideoFileItem(video: VideoItemUi, enabled: Boolean, onRemove: () -> 
                 }
             }
             video.progress?.let { LinearProgressIndicator(progress = { it.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(end = AppSpacing.small)) }
+            if (video.isProcessing && video.progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(end = AppSpacing.small))
             video.error?.let {
                 NoteRow(it, AppIcon.ERROR)
-                TextAction("重试", AppIcon.HISTORY, onRetry)
+                TextAction("重试", AppIcon.HISTORY, onRetry, enabled = enabled)
             }
         }
     }

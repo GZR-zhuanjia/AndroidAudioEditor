@@ -9,6 +9,11 @@
 #include <cstring>
 #include <fcntl.h>
 #include <memory>
+#include <functional>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <cstdarg>
 #include <poll.h>
 #include <mutex>
 #include <stdexcept>
@@ -21,6 +26,8 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavfilter/avfilter.h>
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/avutil.h>
 #include <libavutil/error.h>
@@ -351,6 +358,7 @@ void analyze(Input& input, int streamIndex, const char* path, Progress& progress
     saveEnvelope(envelope, path, *input.task);
     progress.send(av_rescale(envelope.frames, AV_TIME_BASE, envelope.rate), true);
 }
+#include "audio_processing.inc"
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -409,4 +417,117 @@ Java_com_audioassistant_engine_NativeBridge_versions(JNIEnv* env, jobject) {
     const std::string value = std::string("FFmpeg ") + av_version_info() + " / LAME " + get_lame_version()
         + " / avfilter " + std::to_string(avfilter_version());
     return env->NewStringUTF(value.c_str());
+}
+
+namespace {
+Progress processingProgress(JNIEnv* env, jobject listener, int64_t total) {
+    jclass type = env->GetObjectClass(listener);
+    if (!type) throw std::runtime_error("缺少任务进度回调");
+    jmethodID method = env->GetMethodID(type, "onProgress", "(JJ)V"); env->DeleteLocalRef(type);
+    if (!method) throw std::runtime_error("任务进度接口不匹配");
+    return Progress{env, listener, method, total};
+}
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_audioassistant_engine_NativeBridge_convertMp3(JNIEnv* env, jobject, jlong id, jint fd,
+    jlong offset, jlong size, jstring output, jobject listener) {
+    try {
+        Utf path(env, output);
+        try {
+            Input input(taskFor(id)); input.open(fd, offset, size);
+            int index = input.audioStream(); auto* parameters = input.format->streams[index]->codecpar;
+            auto progress = processingProgress(env, listener, input.duration(index));
+            const int rate = parameters->sample_rate;
+            const bool standardRate = rate == 8000 || rate == 11025 || rate == 12000 || rate == 16000 || rate == 22050 ||
+                rate == 24000 || rate == 32000 || rate == 44100 || rate == 48000;
+            if (parameters->codec_id == AV_CODEC_ID_MP3 && standardRate && parameters->ch_layout.nb_channels >= 1 && parameters->ch_layout.nb_channels <= 2) {
+                copyMp3(input, index, path.data, progress); return JNI_TRUE;
+            }
+            LameEncoder encoder(path.data);
+            renderPcm(input, index, {}, [&](const float* samples, int frames) { input.task->check(); encoder.append(samples, frames); }, progress);
+            input.task->check(); encoder.finish(); input.task->check(); return JNI_FALSE;
+        } catch (...) { unlink(path.data); throw; }
+    } catch (...) { reportException(env); return JNI_FALSE; }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_audioassistant_engine_NativeBridge_renderSong(JNIEnv* env, jobject, jlong id, jint fd, jlong offset,
+    jlong size, jlongArray starts, jlongArray ends, jstring output, jobject listener) {
+    try {
+        Utf path(env, output);
+        try {
+            const int count = env->GetArrayLength(starts);
+            if (count <= 0 || count > 100000 || env->GetArrayLength(ends) != count) throw std::runtime_error("剪辑片段数量无效");
+            std::vector<jlong> from(count), to(count);
+            env->GetLongArrayRegion(starts, 0, count, from.data()); env->GetLongArrayRegion(ends, 0, count, to.data());
+            if (env->ExceptionCheck()) return 0;
+            std::vector<SampleSpan> keep; keep.reserve(count);
+            int64_t previous = 0;
+            for (int i = 0; i < count; ++i) {
+                if (from[i] < previous || to[i] <= from[i] || to[i] > int64_t(AV_TIME_BASE) * 24 * 60 * 60)
+                    throw std::runtime_error("剪辑片段时间无效或超过24小时");
+                keep.push_back({toSample(from[i]), toSample(to[i])}); previous = to[i];
+            }
+            Input input(taskFor(id)); input.open(fd, offset, size); int index = input.audioStream();
+            auto progress = processingProgress(env, listener, input.duration(index)); OutputFile pcm(path.data);
+            int64_t frames = renderPcm(input, index, keep, [&](const float* samples, int count) {
+                pcm.write(samples, size_t(count) * OUTPUT_CHANNELS * sizeof(float));
+            }, progress);
+            input.task->check(); pcm.finish(); input.task->check(); return frames;
+        } catch (...) { unlink(path.data); throw; }
+    } catch (...) { reportException(env); return 0; }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_audioassistant_engine_NativeBridge_normalizeSong(JNIEnv* env, jobject, jlong id, jstring source,
+    jstring output, jobject listener) {
+    try {
+        Utf input(env, source), path(env, output);
+        try {
+            auto task = taskFor(id);
+            auto progress = processingProgress(env, listener, av_rescale(rawFrames(input.data), AV_TIME_BASE * 2LL, OUTPUT_RATE));
+            const std::string mode = normalizeSong(input.data, path.data, *task, progress);
+            task->check(); return env->NewStringUTF(mode.c_str());
+        } catch (...) { unlink(path.data); throw; }
+    } catch (...) { reportException(env); return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_audioassistant_engine_NativeBridge_encodeMp3(JNIEnv* env, jobject, jlong id, jobjectArray inputs,
+    jstring output, jobject listener) {
+    try {
+        Utf path(env, output);
+        try {
+            auto task = taskFor(id);
+            int count = env->GetArrayLength(inputs);
+            if (count <= 0 || count > 4096) throw std::runtime_error("拼接歌曲数量无效");
+            std::vector<std::string> paths; int64_t total = 0;
+            for (int i = 0; i < count; ++i) {
+                task->check();
+                jstring value = static_cast<jstring>(env->GetObjectArrayElement(inputs, i));
+                if (!value) throw std::runtime_error("歌曲临时文件路径无效");
+                { Utf source(env, value); paths.emplace_back(source.data); }
+                env->DeleteLocalRef(value);
+                int64_t frames = rawFrames(paths.back());
+                if (frames > int64_t(OUTPUT_RATE) * 24 * 60 * 60 - total) throw std::runtime_error("拼接总时长超过24小时");
+                total += frames;
+            }
+            auto progress = processingProgress(env, listener, av_rescale(total, AV_TIME_BASE, OUTPUT_RATE));
+            LameEncoder encoder(path.data); int64_t cursor = 0;
+            std::vector<float> samples(4096 * OUTPUT_CHANNELS);
+            for (const auto& source : paths) {
+                std::unique_ptr<FILE, decltype(&fclose)> file(fopen(source.c_str(), "rb"), fclose);
+                if (!file) throw std::runtime_error("无法打开歌曲 PCM 文件");
+                while (size_t read = fread(samples.data(), sizeof(float), samples.size(), file.get())) {
+                    task->check();
+                    if (read % OUTPUT_CHANNELS) throw std::runtime_error("歌曲 PCM 尾部不完整");
+                    encoder.append(samples.data(), read / OUTPUT_CHANNELS); cursor += read / OUTPUT_CHANNELS;
+                    progress.send(av_rescale(cursor, AV_TIME_BASE, OUTPUT_RATE));
+                }
+                if (ferror(file.get())) throw std::runtime_error("读取歌曲 PCM 失败");
+            }
+            task->check(); encoder.finish(); task->check();
+        } catch (...) { unlink(path.data); throw; }
+    } catch (...) { reportException(env); }
 }

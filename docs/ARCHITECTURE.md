@@ -1,6 +1,6 @@
 # 架构与工具版本
 
-## 当前源码结构（阶段5）
+## 当前源码结构（阶段6）
 
 单个 `:app`，不引入多模块或 DI 框架，依赖方向 UI → ViewModel → Repository / Service → Native Audio Engine。
 
@@ -12,6 +12,7 @@ app/src/main/java/com/audioassistant/
   data/RecentProjectRepository.kt   最近项目契约
   data/FileWorkspaceRepository.kt   Mutex / AtomicFile / JSON / 受控路径与引用校验
   data/MediaImporter.kt             系统元数据、持久读授权与按需内部副本
+  processing/AudioProcessingService.kt  转换/导出编排、临时目录、验证与成果提交
   ui/WorkspaceViewModel.kt          Activity列表/文件操作，持有编辑会话
   ui/AudioEditor.kt                 编辑会话、独立状态Flow、保存协调
   editing/SegmentTimeline.kt        微秒非破坏片段操作/映射
@@ -22,16 +23,16 @@ app/src/main/java/com/audioassistant/
   ui/screens/                      五类中文页面
   ui/components/                   面板、状态、拖动排序状态
   ui/theme/                        系统深浅色 Material 3
-  engine/NativeAudioEngine.kt       JNI探测/分析，串行worker与取消桥
+  engine/NativeAudioEngine.kt       JNI探测/波形/转换/渲染/均衡/编码，worker与取消桥
   waveform/                        多级数据读取、缓存、独立会话Flow
   ui/components/WaveformPanel.kt    编辑/原曲投影、Canvas、缩放平移定位
-app/src/main/cpp/                   JNI C++ / CMake真实库链接
+app/src/main/cpp/                   audio_engine.cpp、audio_processing.inc / CMake真实库链接
 native/                            源码版本锁与构建/协议说明
 scripts/                           用户本地获取源码、交叉编译、ELF检查
 app/src/main/assets/licenses/       完整原生许可与分发说明
 ```
 
-阶段5增加真实探测和波形，阶段4播放/编辑不变。阶段6才建立转换/导出任务与loudnorm调用。所有已完成项只表示源码已写，未构建/运行；第三方完整源码由锁定脚本在本地取得，不在Git提交大源码树或.so。
+阶段6接通真实转换/导出任务与loudnorm，阶段4按钮式编辑和阶段5波形不变。所有完成项只表示源码已写，未构建/运行；第三方完整源码由锁定脚本在本地取得，不在Git提交大源码树或.so。
 
 ## 固定版本
 
@@ -72,7 +73,7 @@ AudioSegment 为原曲半开区间 `[sourceStartUs, sourceEndUs)`，整数微秒
 
 导入建立一段 `[0, originalDurationUs)`；恢复完整保留已存片段，不展开/重新编码源文件。校验来源存在、同曲来源一致、终点不越原曲、ID 不重复、时长累加不溢出。时间映射、跨段删除和撤销/恢复由阶段4的SegmentTimeline与AudioEditor实现，原文件不变。
 
-唯一 `files/project/workspace.json` 保存 WorkspaceSnapshot(schemaVersion=1)，包含唯一 EditProject(schemaVersion=1) 和成果元数据列表。成果元数据只定义来源分类、真实内部路径、名称、时长和大小；普通导入不登记成果。本阶段无成果生产者，真实成果新增/删除事务在阶段 6/7 完成。
+唯一files/project/workspace.json保存WorkspaceSnapshot(schemaVersion=1)，包含唯一EditProject(schemaVersion=1)和成果元数据。阶段6生产真实成果，记录分类、内部路径、名称、探测时长和大小；普通导入不登记成果。schema未增加字段，阶段7再接改名/删除等管理。
 
 ## 持久化与失败保护
 
@@ -90,13 +91,15 @@ ViewModel 的 Channel 串行处理导入、移除、排序和设置；Repository
 
 路径必须是规范相对路径，且 canonicalFile 父目录仅 sources/ 或 results/；不接受绝对路径、../ 或规范化后不同的别名。isReferenced 同时检查项目和成果。移除歌曲先提交引用释放，再清理；成果若仍在索引中保留实体。外部原曲和另存副本从不删除。读取损坏项目时禁止清理，避免误删有效来源。
 
-启动成功加载后，只扫描本应用sources/中UUID命名的.part/.source，删除不再被项目/成果引用的文件，不扫描results/或未知目录。阶段5只读分析持有独立fd，退出编辑取消；已打开文件即使释放目录引用，其fd也在原生退出后关闭，不改源文件。阶段6导出仍必须加入活动引用保护，不能直接扩大来源清理；阶段7完善成果全生命周期。
+来源清理仍只扫描sources/中本应用UUID命名的.part/.source。阶段6增加Repository活动引用计数，isReferenced同时检查项目/成果/活动任务，导出finally释放；列表和设置在处理期间锁定，导航仍可切换。阶段5只读波形仍持有独立fd，退出取消，不改源文件。
+
+启动成功读取有效快照、开放任务之前，清理processing/中的本应用UUID目录及results/中UUID.part/UUID.mp3且没有任何引用的文件；不扫描外部URI或未知文件。用于回收进程中断/文件重命名后未登记的残留，不恢复任务。正常结束/失败/取消只清该任务目录和未完成输出；已登记成果不在其内，不能被取消删除。阶段7再完善成果主动删除与授权账本。
 
 移除/失败时尽量释放本次持久读授权；若视频会话还用到同一 URI 则保守保留。进程在获取授权但未登记前突然结束，或保护视频后退出时，可能保留无文件实体的读授权；不以全量撤销 provider 权限冒险破坏有效引用，阶段 7 再完善授权账本。内部未登记副本会在下一次有效加载后回收。
 
 ## 后续引擎与兼容性
 
-导入沿用MediaExtractor/MediaMetadataRetriever/OpenableColumns，没有重写导入/持久化。阶段5在裁剪器接FFmpeg probe与真实波形；转换仍未接入。播放器支持而精简引擎不支持的格式可继续按钮编辑，波形单独报错。
+导入沿用MediaExtractor/MediaMetadataRetriever/OpenableColumns，没有重写其持久化。FFmpeg负责波形和正式处理；播放器支持而精简引擎不支持的格式可继续按钮编辑，波形/导出明确报错。
 
 JniNativeAudioEngine读取授权AssetFileDescriptor，JNI自定义AVIO处理偏移和长度，probe返回真实最佳音轨。串行worker处理FFmpeg，取消回调直接设置native atomic；interrupt、读取/解码/写缓存循环检查，退出释放资源。阻塞provider的pread仍受系统调用约束；pipe可轮询取消，但需要seek的容器可能不支持。
 
@@ -104,7 +107,17 @@ WaveformRepository只写cacheDir/waveforms-v1，不复制原曲/登记成果。�
 
 WaveformSession独立Flow、代次隔离旧任务；删剪只更新片段映射，不重新解码原曲。视口包络在Default线程计算，播放tick只更新播放线；全曲统一标明显示倍率，静音为0。基础bin约20ms，边界仍受此粒度限制。完整协议见native/README.md。
 
-后续转换服务负责输出验证提交，UI不拼FFmpeg命令。loudnorm按每曲剪后内容独立分析处理，再顺序拼接。Media3与FFmpeg的PTS/编码延迟处理可能不同，不得以普通试听或波形冒充最终响度或编码结果。
+AudioProcessingService独立于列表写入Channel，Activity ViewModel一次只运行一个批次/导出。进度来自实际源时间/PCM帧和处理阶段，未知时长不定进度，不用计时器推进。任务代次+取消状态隔离迟到回调；轮换模块不重建任务。批量逐项失败继续、仅失败项可重试，已完成项不再次转换；取消保留已成功登记项。
+
+视频最佳音轨为MP3、1/2声道且标准MP3采样率、无需变换时走FFmpeg包复制/MP3 mux；其他音轨真实解码→48kHz stereo float→LAME VBR quality2。原始位流复制保留原采样率/声道。没有FFmpeg CLI或shell命令执行。
+
+拼接按歌曲列表快照顺序：每首源解码、原曲PTS映射到48kHz采样网格、按半开保留区间ceil边界切出连续PCM，写processing/UUID目录；不修改原文件。每首loudnorm两遍处理后，再将全部实际PCM顺序喂给同一个LAME编码器；整个输出只flush一次并写Xing/LAME delay/padding标签，不逐曲编码后拼MP3字节。
+
+loudnorm目标I=-16 LUFS、TP=-1.5dBTP、LRA=11，第一遍真实滤镜graph分析丢弃输出，从指定滤镜/当前线程的uninit日志取实际input_i/tp/lra/thresh/target_offset，第二遍传入这些值、linear=true。可能回退FFmpeg loudnorm内置dynamic模式，不另加压缩/增强滤镜；原曲试听不做此处理。数字静音逐样验证为0后原样保留；非静音但测量无效/过短则报错，让用户关闭均衡重试。滤镜输出长度不符即拒绝。
+
+正式输出先results/UUID.part，native成功关闭后检查非零、真实probe为MP3且有正时长/有效声道采样率，再fsync。确认协程仍有效后进入NonCancellable提交：重命名UUID.mp3、原子保存索引并发布真实结果。名称不含扩展名，非法字符清理、同名自动加(2)等，实体UUID从不覆盖。登记失败删除未引用正式文件；进程中断残留由下次有效加载回收。提交临界区收到取消仍完成登记并保留成果。UI成功面板留当前模块，阶段7管理操作仍如实未开放。
+
+PCM为48kHz双声道float32，约384KB/秒，导出预估全部PCM+均衡时最大单曲额外PCM+MP3+32MiB空间；不足或实际写失败不登记。处理总时间线最多24小时、每曲最多100000片段、最多4096首、源最多32声道/384kHz；波形仍8小时。容器尾时长最多100ms padding差允许实际缩短，绝不凭空补尾；更大的提前EOF失败。PTS空隙用真实呈现时间上的0采样补齐、重叠丢弃重复，缺PTS连续累计。Media3、原生PTS/priming、MP3编码延迟不同，不能宣称逐采样一致或所有设备绝对无缝。
 
 NDK r28c、AGP8.10.1未压缩JNI打包，FFmpeg/LAME/JNI显式max/common-page-size=16384。scripts/inspect-native.py用于本地读ELF架构/LOAD/SONAME/NEEDED；还须检查APK中所有.so（含libc++_shared）、zipalign及16KB设备。当前无.so或兼容性结论。
 
@@ -168,4 +181,4 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 - https://developer.android.com/media/media3/exoplayer/playlists
 - https://github.com/androidx/media/blob/1.7.1/libraries/common/src/main/java/androidx/media3/common/MediaItem.java （核对微秒裁剪API）
 
-阶段4应用版本0.2.0/versionCode2；阶段5为0.3.0/versionCode3，Kotlin/Compose/Media3等既有依赖不变。
+阶段4应用0.2.0/code2、阶段5为0.3.0/code3；阶段6为0.4.0/code4，全部工具与既有依赖不变。

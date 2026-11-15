@@ -16,6 +16,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** 仅磁盘提交成功后发布状态；损坏/未知版本不会以空项目覆盖。 */
 class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
@@ -28,6 +29,7 @@ class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
     val snapshot = mutableSnapshot.asStateFlow()
     override val project = mutableProject.asStateFlow()
     private var loaded = false
+    private val activeFiles = ConcurrentHashMap<String, Int>()
 
     override suspend fun load() = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -78,9 +80,39 @@ class FileWorkspaceRepository(context: Context) : RecentProjectRepository {
         return file
     }
 
-    fun isReferenced(relativePath: String): Boolean = snapshot.value.let { value ->
+    fun isReferenced(relativePath: String): Boolean = activeFiles.containsKey(relativePath) || snapshot.value.let { value ->
         value.project.sources.any { it.storage == SourceStorage.INTERNAL_FILE && it.location == relativePath } ||
             value.results.any { it.relativePath == relativePath }
+    }
+
+    /** Processing leases participate in the same cleanup checks as persisted references. */
+    suspend fun <T> withFileReferences(paths: Set<String>, block: suspend () -> T): T {
+        mutex.withLock {
+            check(loaded)
+            paths.forEach { internalFile(it) }
+            paths.forEach { activeFiles[it] = (activeFiles[it] ?: 0) + 1 }
+        }
+        try { return block() }
+        finally { withContext(NonCancellable) { mutex.withLock {
+            paths.forEach { path ->
+                val count = (activeFiles[path] ?: 1) - 1
+                if (count == 0) activeFiles.remove(path) else activeFiles[path] = count
+            }
+        } } }
+    }
+
+    /** Startup only, after a valid snapshot load and before allowing new processing. No task recovery. */
+    suspend fun cleanupProcessingResidue(): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(loaded); check(activeFiles.isEmpty())
+            var complete = true
+            File(filesDir, "processing").listFiles()?.filter { it.name.matches(Regex("[0-9a-f-]{36}")) }
+                ?.forEach { if (!it.deleteRecursively()) complete = false }
+            File(filesDir, "results").listFiles()?.forEach { file ->
+                if (file.name.matches(Regex("[0-9a-f-]{36}\\.(part|mp3)")) && !isReferenced("results/${file.name}") && !file.delete()) complete = false
+            }
+            complete
+        }
     }
 
     /** 只扫描本应用生成的 sources 文件；不扫描/删除成果、外部 URI 或未知文件。 */

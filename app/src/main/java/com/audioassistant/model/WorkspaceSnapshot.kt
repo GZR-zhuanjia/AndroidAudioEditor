@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class ResultOrigin { VIDEO, MERGE }
 
-/** 仅正式成果可登记；导入文件永远不会生成该记录。阶段 6/7 接通写入。 */
+/** 只有临时输出完成并通过真实MP3探测后才能登记；普通导入不生成记录。 */
 @Serializable
 data class LibraryRecord(
     val id: String,

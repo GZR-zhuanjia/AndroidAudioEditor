@@ -42,6 +42,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.audioassistant.ui.SongItemUi
+import com.audioassistant.ui.ProcessingUi
+import com.audioassistant.ui.components.ProcessingStatus
 import com.audioassistant.ui.components.ActionDock
 import com.audioassistant.ui.components.ActionPair
 import com.audioassistant.ui.components.AppGlyph
@@ -65,7 +67,7 @@ fun EditWorkspaceScreen(
     onEditor: (String?) -> Unit, onExport: () -> Unit, onOrder: (List<String>) -> Unit,
     onMove: (String, Int) -> Unit, onRemove: (String) -> Unit, onRelink: (String) -> Unit,
     onRefresh: () -> Unit, onDragState: (Boolean) -> Unit,
-    preview: WorkspacePreviewUi, onPreviewAll: () -> Unit,
+    preview: WorkspacePreviewUi, onPreviewAll: () -> Unit, processing: ProcessingUi?, onCancel: () -> Unit,
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val list = rememberLazyListState()
@@ -167,7 +169,8 @@ fun EditWorkspaceScreen(
             }
             if (songs.isNotEmpty()) item(key = "sorting_hint") { NoteRow("长按左侧拖动柄排序，点按卡片显示更多操作", AppIcon.DRAG) }
         }
-        if (songs.isNotEmpty()) ActionDock {
+        if (processing != null) ActionDock { ProcessingStatus(processing, onCancel) }
+        else if (songs.isNotEmpty()) ActionDock {
             SectionHeader("${songs.size} 首歌曲", "预计 ${formatTime(songs.sumOf { it.editedDurationUs })}")
             ActionPair(
                 first = { SecondaryActionButton(if (preview.playing) "暂停试听" else "试听全部",
@@ -177,7 +180,7 @@ fun EditWorkspaceScreen(
                 stackAt = 240.dp, stackForLargeText = false,
             )
             preview.error?.let { NoteRow(it, AppIcon.ERROR) }
-            NoteRow("试听未做响度均衡 · 导出暂未开放")
+            NoteRow("试听未做响度均衡 · 可在导出时开启")
         }
     }
 }

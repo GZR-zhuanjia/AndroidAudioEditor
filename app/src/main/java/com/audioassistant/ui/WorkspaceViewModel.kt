@@ -13,8 +13,12 @@ import com.audioassistant.model.ResultOrigin
 import com.audioassistant.model.SongEdit
 import com.audioassistant.model.SourceReference
 import com.audioassistant.model.SourceStorage
+import com.audioassistant.model.LibraryRecord
+import com.audioassistant.processing.AudioProcessingService
+import com.audioassistant.processing.ProcessingProgress
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +30,7 @@ import kotlinx.coroutines.withContext
 data class VideoItemUi(
     val id: String, val name: String, val uri: String,
     val durationUs: Long? = null, val sizeBytes: Long? = null,
-    val status: String = "待转换", val progress: Float? = null, val error: String? = null,
+    val status: String = "待转换", val progress: Float? = null, val error: String? = null, val isProcessing: Boolean = false,
 )
 data class SongItemUi(
     val id: String, val name: String, val originalDurationUs: Long, val editedDurationUs: Long,
@@ -36,6 +40,11 @@ enum class ResultCategory(val label: String) { ALL("全部"), VIDEO("视频转�
 data class ResultItemUi(val id: String, val name: String, val durationUs: Long, val category: ResultCategory)
 enum class AppSheet { VIDEO_NAMES, EXPORT, MORE_EDIT }
 data class UiNotice(val title: String, val message: String)
+enum class ProcessingKind { VIDEO, EXPORT }
+data class ProcessingUi(
+    val kind: ProcessingKind, val label: String, val fraction: Float? = null,
+    val overall: Float? = null, val index: Int = 1, val count: Int = 1, val cancelling: Boolean = false, val generation: Long = 0,
+)
 data class WorkspaceUiState(
     val videos: List<VideoItemUi> = emptyList(), val songs: List<SongItemUi> = emptyList(),
     val results: List<ResultItemUi> = emptyList(), val category: ResultCategory = ResultCategory.ALL,
@@ -43,7 +52,8 @@ data class WorkspaceUiState(
     val sheet: AppSheet? = null, val notice: UiNotice? = null,
     val loadingMessage: String? = "正在读取最近项目…", val errorMessage: String? = null,
     val ready: Boolean = false, val isWorking: Boolean = false, val isReordering: Boolean = false, val cancelDragSignal: Int = 0,
-    // 只有未来真实任务验证成果后才可赋值；没有模拟成功事件。
+    val processing: ProcessingUi? = null,
+    // 仅真实文件完成并原子登记后赋值。
     val completedResult: ResultItemUi? = null,
 )
 
@@ -51,7 +61,12 @@ data class WorkspaceUiState(
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = FileWorkspaceRepository(application)
     private val importer = MediaImporter(application, repository)
+    private var processingJob: Job? = null
+    private var processingSequence = 0L
     private val mutableState = MutableStateFlow(WorkspaceUiState())
+    private val processingService = AudioProcessingService(application, repository) { message ->
+        mutableState.update { it.copy(notice = UiNotice("临时文件清理", message)) }
+    }
     val state = mutableState.asStateFlow()
     private val commands = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private var pending = 0
@@ -62,6 +77,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 repository.load()
+                if (!repository.cleanupProcessingResidue()) reportError("部分上次未完成的处理文件暂未清理，将在下次打开时重试。")
                 checkSources()
                 renderProject()
                 mutableState.update { it.copy(ready = true, exportSettings = repository.snapshot.value.project.exportSettings, loadingMessage = if (pending > 0) "正在处理已选择的文件…" else null) }
@@ -75,6 +91,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun enqueue(label: String, action: suspend () -> Unit) {
+        if (state.value.processing != null) { reportError("音频正在处理中，请完成或取消后再修改列表。") ; return }
         // ActivityResult 可能在进程重建、项目加载完成前送达；先排队，读取失败时再拒绝写入。
         if (!state.value.ready && state.value.loadingMessage == null) {
             reportError("最近项目尚未正确读取，已停止写入，请重新打开应用并保留错误提示。")
@@ -118,7 +135,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             .associate { it.id to "源文件不可用，可能已移动、断开连接或读取授权失效。请重新选择该文件，或从项目移除。" }
     }
 
-    fun refreshSources() = enqueue("正在检查源文件…") { checkSources(); renderProject() }
+    fun refreshSources() { if (state.value.processing == null) enqueue("正在检查源文件…") { checkSources(); renderProject() } }
 
     fun importVideos(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -202,6 +219,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun removeVideo(id: String) {
+        if (state.value.processing != null) return
         mutableState.update { it.copy(videos = it.videos.filterNot { video -> video.id == id }, videoNames = it.videoNames - id) }
     }
 
@@ -222,6 +240,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun reorderSongs(ids: List<String>) {
+        if (state.value.processing != null) return
         val current = state.value.songs
         if (ids == current.map { it.id }) return
         if (ids.size != current.size || ids.toSet() != current.map { it.id }.toSet()) return
@@ -267,6 +286,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun showSheet(sheet: AppSheet) {
+        if (state.value.processing != null) return
         mutableState.update { current -> current.copy(sheet = sheet, videoNames = if (sheet == AppSheet.VIDEO_NAMES) current.videos.associate { video ->
             video.id to (current.videoNames[video.id] ?: video.name.substringBeforeLast('.', video.name))
         } else current.videoNames) }
@@ -274,10 +294,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun closeSheet() { mutableState.update { it.copy(sheet = null) } }
     fun selectCategory(category: ResultCategory) { mutableState.update { it.copy(category = category) } }
     fun setExportName(name: String) {
+        if (state.value.processing != null) return
         mutableState.update { it.copy(exportSettings = it.exportSettings.copy(baseName = name)) }
         persistSettings()
     }
     fun setNormalize(enabled: Boolean) {
+        if (state.value.processing != null) return
         mutableState.update { it.copy(exportSettings = it.exportSettings.copy(normalizeLoudness = enabled)) }
         persistSettings()
     }
@@ -285,11 +307,111 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val settings = state.value.exportSettings
         enqueue("正在保存导出设置…") { repository.update { it.copy(project = it.project.copy(exportSettings = settings)) } }
     }
-    fun setVideoName(id: String, name: String) { mutableState.update { it.copy(videoNames = it.videoNames + (id to name)) } }
+    fun setVideoName(id: String, name: String) { if (state.value.processing == null) mutableState.update { it.copy(videoNames = it.videoNames + (id to name)) } }
+
+    private fun canProcess(): Boolean = state.value.let {
+        it.ready && !it.isWorking && !it.isReordering && it.processing == null && processingJob == null
+    }
+    private fun LibraryRecord.ui() = ResultItemUi(id, displayName, durationUs,
+        if (origin == ResultOrigin.VIDEO) ResultCategory.VIDEO else ResultCategory.MERGE)
+
+    fun startConversions(onlyId: String? = null) {
+        if (!canProcess()) return
+        val videos = state.value.videos.filter { if (onlyId == null) it.status != "已完成" else it.id == onlyId && it.error != null }
+        if (videos.isEmpty()) { reportError("没有待转换的视频"); return }
+        val names = videos.associate { it.id to (state.value.videoNames[it.id] ?: it.name.substringBeforeLast('.', it.name)).trim() }
+        if (names.values.any { it.isBlank() }) { reportError("请为每个视频输入文件名"); return }
+        editor.stopWorkspacePreview()
+        val generation = ++processingSequence
+        mutableState.update { it.copy(sheet = null, completedResult = null, isWorking = true,
+            processing = ProcessingUi(ProcessingKind.VIDEO, "正在准备转换", count = videos.size, generation = generation), errorMessage = null) }
+        processingJob = viewModelScope.launch {
+            var last: ResultItemUi? = null
+            var succeeded = 0; var failed = 0; var cancelled = false
+            var currentId: String? = null
+            try {
+                videos.forEachIndexed { index, video ->
+                    currentId = video.id
+                    mutableState.update { state -> state.copy(videos = state.videos.map { if (it.id == video.id) it.copy(status = "转换中", error = null, progress = null, isProcessing = true) else it }) }
+                    try {
+                        processingService.convert(Uri.parse(video.uri), names.getValue(video.id), { progress ->
+                            mutableState.update { state ->
+                                val active = state.processing
+                                if (active == null || active.generation != generation || active.cancelling) state else state.copy(
+                                    processing = active.copy(label = progress.label, fraction = progress.fraction,
+                                        overall = (index + (progress.fraction ?: 0f)) / videos.size, index = index + 1),
+                                    videos = state.videos.map { if (it.id == video.id) it.copy(status = progress.label, progress = progress.fraction) else it },
+                                )
+                            }
+                        }) { result ->
+                            // Called in the non-cancellable commit section, so a committed file is never reported as lost.
+                            last = result.ui(); succeeded++
+                            mutableState.update { state -> state.copy(
+                                videos = state.videos.map { if (it.id == video.id) it.copy(status = "已完成", progress = null, error = null, isProcessing = false) else it },
+                                results = repository.snapshot.value.results.map { it.ui() },
+                            ) }
+                        }
+                    } catch (stopped: CancellationException) { throw stopped }
+                    catch (error: Exception) {
+                        failed++
+                        mutableState.update { state -> state.copy(videos = state.videos.map {
+                            if (it.id == video.id) it.copy(status = "转换失败", progress = null, error = error.message ?: "无法处理此视频", isProcessing = false) else it
+                        }) }
+                    }
+                }
+            } catch (_: CancellationException) { cancelled = true }
+            finally {
+                renderProject()
+                mutableState.update { state -> state.copy(isWorking = pending > 0, processing = null, completedResult = last,
+                    videos = state.videos.map { if (cancelled && it.id == currentId && it.status != "已完成" && it.error == null) it.copy(status = "已取消", progress = null, isProcessing = false) else it },
+                    errorMessage = if (cancelled) "已取消，保留 $succeeded 个成功成果" else if (failed > 0) "转换结束：成功 $succeeded 个，失败 $failed 个，可在列表重试" else state.errorMessage,
+                ) }
+                processingJob = null
+            }
+        }
+    }
+
+    fun retryVideo(id: String) = startConversions(id)
+
+    fun startExport() {
+        if (!canProcess()) return
+        val project = repository.snapshot.value.project
+        val settings = state.value.exportSettings
+        if (settings.baseName.isBlank() || project.songs.isEmpty() || project.songs.any { it.segments.isEmpty() } || state.value.songs.any { it.error != null }) {
+            reportError("请填写文件名，并确认每首歌曲来源有效、至少保留一段音频"); return
+        }
+        editor.stopWorkspacePreview()
+        val generation = ++processingSequence
+        mutableState.update { it.copy(sheet = null, completedResult = null, isWorking = true, errorMessage = null,
+            processing = ProcessingUi(ProcessingKind.EXPORT, "正在准备导出", generation = generation)) }
+        processingJob = viewModelScope.launch {
+            var result: ResultItemUi? = null
+            try {
+                processingService.export(project, settings.baseName, settings.normalizeLoudness, { progress: ProcessingProgress ->
+                    mutableState.update {
+                        val active = it.processing
+                        if (active == null || active.generation != generation || active.cancelling) it
+                        else it.copy(processing = active.copy(label = progress.label, fraction = progress.fraction, overall = progress.fraction))
+                    }
+                }) { record -> result = record.ui(); mutableState.update { it.copy(results = repository.snapshot.value.results.map { item -> item.ui() }) } }
+            } catch (_: CancellationException) { reportError(if (result == null) "已取消导出，已有成果和原曲不受影响" else "成果已保存，取消未删除已提交的文件") }
+            catch (error: Exception) { reportError("导出失败：${error.message ?: "音频处理错误"}。已有成果已保留。") }
+            finally {
+                renderProject()
+                mutableState.update { it.copy(isWorking = pending > 0, processing = null, completedResult = result) }
+                processingJob = null
+            }
+        }
+    }
+
+    fun cancelProcessing() {
+        mutableState.update { it.copy(processing = it.processing?.copy(cancelling = true, label = "正在取消并清理未完成文件…")) }
+        processingJob?.cancel()
+    }
     fun unavailable(action: String) { mutableState.update { it.copy(notice = UiNotice("暂不可用", "当前版本尚未开放“$action”。没有处理或更改任何音频文件。")) } }
     fun reportError(message: String) { mutableState.update { it.copy(errorMessage = message) } }
     fun dismissError() { mutableState.update { it.copy(errorMessage = null) } }
     fun dismissNotice() { mutableState.update { it.copy(notice = null) } }
     fun dismissSuccess() { mutableState.update { it.copy(completedResult = null) } }
-    override fun onCleared() { editor.release(); super.onCleared() }
+    override fun onCleared() { processingJob?.cancel(); processingService.close(); editor.release(); super.onCleared() }
 }

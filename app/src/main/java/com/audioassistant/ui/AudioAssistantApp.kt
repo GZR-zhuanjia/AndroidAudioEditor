@@ -149,7 +149,8 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         onPhoto = { launchPicker { photoPicker.launch(PickVisualMediaRequest(mediaType = ActivityResultContracts.PickVisualMedia.VideoOnly)) } },
                         onFiles = { launchPicker { videoFiles.launch(arrayOf("video/*")) } },
                         onSettings = { workspace.showSheet(AppSheet.VIDEO_NAMES) },
-                        onRemove = workspace::removeVideo, onUnavailable = workspace::unavailable,
+                        onRemove = workspace::removeVideo, onRetry = workspace::retryVideo,
+                        processing = state.processing, onCancel = workspace::cancelProcessing,
                     )
                 }
                 composable(Destination.EDIT.route) {
@@ -165,6 +166,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         onRelink = { id -> relinkSongId = id; launchPicker { relinkFile.launch(arrayOf("audio/*")) } },
                         onRefresh = workspace::refreshSources, onDragState = workspace::setReordering,
                         preview = preview, onPreviewAll = workspace.editor::playWorkspace,
+                        processing = state.processing, onCancel = workspace::cancelProcessing,
                     )
                 }
                 composable(Destination.LIBRARY.route) {
@@ -218,8 +220,8 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         ModalBottomSheet(onDismissRequest = workspace::closeSheet, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
             when (state.sheet) {
-                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, workspace::closeSheet)
-                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, workspace::closeSheet)
+                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, workspace::closeSheet, { workspace.startConversions() })
+                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, workspace::closeSheet, workspace::startExport)
                 AppSheet.MORE_EDIT -> {
                     val editor by workspace.editor.state.collectAsStateWithLifecycle()
                     EditorOptions(editor, workspace::closeSheet, workspace.editor::act, workspace.editor::inputBoundary,
