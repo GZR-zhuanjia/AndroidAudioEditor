@@ -124,7 +124,7 @@ fun EditWorkspaceScreen(
                     modifier = Modifier.fillMaxWidth().zIndex(if (reorder.draggedId == song.id) 1f else 0f)
                         .graphicsLayer { translationY = reorder.translation(song.id) },
                     shape = MaterialTheme.shapes.large,
-                    border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                     Column(Modifier.padding(AppSpacing.medium)) {
                         Row(Modifier.onSizeChanged { headerHeight = it.height.toFloat() }, horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
@@ -144,7 +144,6 @@ fun EditWorkspaceScreen(
                             }) { AppGlyph(AppIcon.DRAG, "长按拖动排序：${song.name}") }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                                    AppGlyph(AppIcon.AUDIO, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                                     Text(song.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
                                 Text("原始 ${formatTime(song.originalDurationUs)} · 剪后 ${formatTime(song.editedDurationUs)}",

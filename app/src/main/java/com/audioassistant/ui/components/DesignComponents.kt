@@ -39,16 +39,16 @@ import com.audioassistant.ui.theme.AppSpacing
 enum class FeatureTone { PURPLE, BLUE, NEUTRAL }
 
 @Composable
-fun IconBadge(icon: AppIcon, tone: FeatureTone = FeatureTone.PURPLE, size: Dp = AppSpacing.featureIcon) {
+fun IconBadge(icon: AppIcon, tone: FeatureTone = FeatureTone.NEUTRAL, size: Dp = AppSpacing.featureIcon) {
     val colors = MaterialTheme.colorScheme
     val background = when (tone) {
-        FeatureTone.PURPLE -> colors.primaryContainer
-        FeatureTone.BLUE -> colors.secondaryContainer
+        FeatureTone.PURPLE -> colors.tertiaryContainer
+        FeatureTone.BLUE -> colors.primaryContainer
         FeatureTone.NEUTRAL -> colors.surfaceContainerHigh
     }
     val foreground = when (tone) {
-        FeatureTone.PURPLE -> colors.primary
-        FeatureTone.BLUE -> colors.secondary
+        FeatureTone.PURPLE -> colors.tertiary
+        FeatureTone.BLUE -> colors.primary
         FeatureTone.NEUTRAL -> colors.onSurfaceVariant
     }
     Surface(shape = MaterialTheme.shapes.medium, color = background, contentColor = foreground) {
@@ -61,12 +61,11 @@ fun IconBadge(icon: AppIcon, tone: FeatureTone = FeatureTone.PURPLE, size: Dp = 
 @Composable
 fun FeatureCard(title: String, description: String, icon: AppIcon, tone: FeatureTone, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
-        Row(Modifier.padding(AppSpacing.large), horizontalArrangement = Arrangement.spacedBy(AppSpacing.large), verticalAlignment = Alignment.CenterVertically) {
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Row(Modifier.padding(AppSpacing.page), horizontalArrangement = Arrangement.spacedBy(AppSpacing.large), verticalAlignment = Alignment.CenterVertically) {
             IconBadge(icon, tone)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(title, style = MaterialTheme.typography.titleLarge)
                 Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             AppGlyph(AppIcon.RIGHT, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -86,13 +85,13 @@ fun SectionHeader(title: String, supporting: String? = null, icon: AppIcon? = nu
 @Composable
 fun EmptyState(
     title: String, description: String, modifier: Modifier = Modifier, icon: AppIcon = AppIcon.AUDIO,
-    tone: FeatureTone = FeatureTone.PURPLE, actions: (@Composable ColumnScope.() -> Unit)? = null,
+    tone: FeatureTone = FeatureTone.NEUTRAL, actions: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxWidth().padding(vertical = AppSpacing.large),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
         AppGlyph(icon, modifier = Modifier.size(40.dp), tint = if (icon == AppIcon.ERROR) MaterialTheme.colorScheme.error else when (tone) {
-            FeatureTone.PURPLE -> MaterialTheme.colorScheme.primary
-            FeatureTone.BLUE -> MaterialTheme.colorScheme.secondary
+            FeatureTone.PURPLE -> MaterialTheme.colorScheme.tertiary
+            FeatureTone.BLUE -> MaterialTheme.colorScheme.primary
             FeatureTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
         })
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
@@ -105,15 +104,17 @@ fun EmptyState(
 }
 
 @Composable
-fun PrimaryActionButton(text: String, icon: AppIcon, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun PrimaryActionButton(text: String, icon: AppIcon?, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(onClick, modifier.heightIn(min = AppSpacing.touch), enabled = enabled, shape = MaterialTheme.shapes.medium,
         contentPadding = PaddingValues(horizontal = AppSpacing.large, vertical = AppSpacing.small),
         colors = ButtonDefaults.buttonColors(
             disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
             disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
         )) {
-        AppGlyph(icon, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(AppSpacing.small))
+        if (icon != null) {
+            AppGlyph(icon, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(AppSpacing.small))
+        }
         Text(text, textAlign = TextAlign.Center)
     }
 }
@@ -154,17 +155,16 @@ fun ActionDock(content: @Composable ColumnScope.() -> Unit) {
 fun NoteRow(text: String, icon: AppIcon = AppIcon.INFO) {
     val color = if (icon == AppIcon.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
     Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-        AppGlyph(icon, modifier = Modifier.size(16.dp), tint = color)
+        if (icon == AppIcon.ERROR) AppGlyph(icon, modifier = Modifier.size(16.dp), tint = color)
         Text(text, style = MaterialTheme.typography.bodySmall, color = color)
     }
 }
 
 @Composable
-fun SheetHeader(title: String, icon: AppIcon, onClose: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = AppSpacing.page, end = AppSpacing.small),
+fun SheetHeader(title: String, @Suppress("UNUSED_PARAMETER") icon: AppIcon, onClose: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = AppSpacing.page, end = AppSpacing.small, top = AppSpacing.small, bottom = AppSpacing.small),
         horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-        AppGlyph(icon, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
         IconButton(onClick = onClose) { AppGlyph(AppIcon.CLOSE, "关闭面板") }
     }
 }
@@ -196,9 +196,9 @@ fun HomeAppBar(onSettings: () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.background) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
             horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
-            IconBadge(AppIcon.WAVE, size = 44.dp)
+            IconBadge(AppIcon.WAVE, FeatureTone.BLUE, size = 40.dp)
             Column(Modifier.weight(1f)) {
-                Text("音频助手", style = MaterialTheme.typography.headlineSmall)
+                Text("音频助手", style = MaterialTheme.typography.headlineMedium)
                 Text("让音频处理更简单", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onSettings) { AppGlyph(AppIcon.TUNE, "设置（暂未开放）") }

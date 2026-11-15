@@ -14,6 +14,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,10 +57,13 @@ fun VideoScreen(
         }
         LazyColumn(Modifier.weight(1f), contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
             if (videos.isEmpty()) item {
-                EmptyState("添加需要转换的视频", "选择一个或多个视频，成果保存到成果库。", icon = AppIcon.VIDEO, tone = FeatureTone.BLUE) {
-                    PrimaryActionButton("从相册选择", AppIcon.PHOTO, onPhoto, Modifier.fillMaxWidth(), enabled)
-                    SecondaryActionButton("从文件中选择", AppIcon.FOLDER, onFiles, Modifier.fillMaxWidth(), enabled)
-                    NoteRow("默认 MP3 · 成果自动保存")
+                Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    EmptyState("添加需要转换的视频", "支持选择一个或多个视频", modifier = Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
+                        icon = AppIcon.VIDEO, tone = FeatureTone.NEUTRAL) {
+                        PrimaryActionButton("从相册选择", AppIcon.PHOTO, onPhoto, Modifier.fillMaxWidth(), enabled)
+                        SecondaryActionButton("从文件中选择", AppIcon.FOLDER, onFiles, Modifier.fillMaxWidth(), enabled)
+                        Text("MP3 · 转换后自动加入成果库", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             items(videos, key = { it.id }) { video ->
@@ -83,7 +87,7 @@ private fun VideoFileItem(video: VideoItemUi, enabled: Boolean, onRemove: () -> 
         Column(Modifier.padding(start = AppSpacing.medium, end = AppSpacing.xSmall, top = AppSpacing.medium, bottom = AppSpacing.medium),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
             Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(AppIcon.VIDEO, FeatureTone.BLUE, 40.dp)
+                IconBadge(AppIcon.VIDEO, FeatureTone.NEUTRAL, 40.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
                     Text(video.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${formatTime(video.durationUs)} · ${formatSize(video.sizeBytes)}", style = MaterialTheme.typography.bodySmall,

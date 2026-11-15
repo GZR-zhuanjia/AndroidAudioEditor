@@ -22,11 +22,11 @@ import com.audioassistant.ui.theme.AppSpacing
 
 @Composable
 fun HomeScreen(recentSongCount: Int, onVideo: () -> Unit, onEdit: () -> Unit) {
-    LazyColumn(contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+    LazyColumn(contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
         item {
             Column(Modifier.padding(bottom = AppSpacing.small), verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
-                Text("想要做什么？", style = MaterialTheme.typography.titleLarge)
-                Text("选择功能，开始处理音频", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("开始处理音频", style = MaterialTheme.typography.titleLarge)
+                Text("选择一个工具", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item { FeatureCard("视频转音频", "提取视频声音，保存为 MP3", AppIcon.VIDEO, FeatureTone.BLUE, onVideo) }
@@ -34,8 +34,7 @@ fun HomeScreen(recentSongCount: Int, onVideo: () -> Unit, onEdit: () -> Unit) {
         if (recentSongCount > 0) item {
             Card(onClick = onEdit, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                Row(Modifier.padding(AppSpacing.large), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
-                    AppGlyph(AppIcon.HISTORY, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.padding(AppSpacing.page), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("继续上次剪辑", style = MaterialTheme.typography.titleSmall)
                         Text("已保存 $recentSongCount 首歌曲", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

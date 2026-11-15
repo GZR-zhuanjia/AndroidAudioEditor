@@ -202,3 +202,7 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 - https://github.com/androidx/media/blob/1.7.1/libraries/common/src/main/java/androidx/media3/common/MediaItem.java （核对微秒裁剪API）
 
 阶段4应用0.2.0/code2、阶段5为0.3.0/code3、阶段6为0.4.0/code4；阶段7为0.5.0/code5，全部工具与既有依赖不变。
+
+## 0.5.1 标准交互覆盖说明
+
+本节覆盖历史阶段4的手写导航颜色动画和150/100ms页面淡化选择。底栏改用标准 Material3 NavigationBar/NavigationBarItem，保留默认交互与安全区；NavHost 不额外淡化页面，顶部标题和内容随同一路由更新。ModalBottomSheet 显式关闭和提交先完成标准 hide，再执行状态更新/业务回调，协程挂在稳定宿主作用域。主题、共享卡片/表单/标题/列表调整为中性黑灰与局部强调。无新依赖，不改文件和音频架构。

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -16,7 +15,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -40,49 +40,49 @@ fun ExportOptions(state: WorkspaceUiState, onName: (String) -> Unit, onNormalize
         SheetHeader("导出拼接音频", AppIcon.DOWNLOAD, onClose)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(AppSpacing.page),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
-            OutlinedTextField(
+            TextField(
                 value = name, onValueChange = onName, enabled = state.ready, label = { Text("文件名称") },
-                leadingIcon = { AppGlyph(AppIcon.EDIT) }, shape = MaterialTheme.shapes.medium,
+                shape = MaterialTheme.shapes.medium,
                 singleLine = true, isError = name.isBlank(), modifier = Modifier.fillMaxWidth(),
                 supportingText = { Text(if (name.isBlank()) "请输入文件名" else "无需输入扩展名，同名时创建新副本") },
             )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-                AppGlyph(AppIcon.AUDIO, tint = MaterialTheme.colorScheme.primary)
-                Text("输出格式", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
-                    Text("MP3", Modifier.padding(horizontal = AppSpacing.medium, vertical = AppSpacing.small), style = MaterialTheme.typography.labelLarge)
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
+                Column {
+                    Row(Modifier.padding(AppSpacing.large), verticalAlignment = Alignment.CenterVertically) {
+                        Text("输出格式", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Text("MP3", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = AppSpacing.large), color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth().toggleable(value = state.exportSettings.normalizeLoudness, role = Role.Switch,
+                        enabled = state.ready, onValueChange = onNormalize).padding(AppSpacing.large),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
+                            Text("响度均衡", style = MaterialTheme.typography.titleSmall)
+                            Text("减小不同歌曲间的音量差异", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = state.exportSettings.normalizeLoudness, enabled = state.ready, onCheckedChange = null)
+                    }
                 }
             }
-            Row(Modifier.fillMaxWidth().toggleable(value = state.exportSettings.normalizeLoudness, role = Role.Switch,
-                enabled = state.ready, onValueChange = onNormalize),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-                AppGlyph(AppIcon.TUNE, tint = MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f)) {
-                    Text("响度均衡", style = MaterialTheme.typography.titleSmall)
-                    Text("减小不同歌曲间的音量差异", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = state.exportSettings.normalizeLoudness, enabled = state.ready, onCheckedChange = null)
-            }
-            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer) {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
                 Column(Modifier.padding(AppSpacing.large), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-                    SummaryRow("拼接歌曲", "${state.songs.size} 首", AppIcon.AUDIO)
-                    SummaryRow("预计时长", formatTime(state.songs.sumOf { it.editedDurationUs }), AppIcon.HISTORY)
-                    SummaryRow("保存位置", "内部成果库", AppIcon.LIBRARY)
+                    SummaryRow("拼接歌曲", "${state.songs.size} 首")
+                    SummaryRow("预计时长", formatTime(state.songs.sumOf { it.editedDurationUs }))
+                    SummaryRow("保存位置", "内部成果库")
                 }
             }
             NoteRow("普通试听不代表响度均衡后的效果")
         }
         ActionDock {
-            PrimaryActionButton("开始导出", AppIcon.DOWNLOAD, onStart, Modifier.fillMaxWidth(),
+            PrimaryActionButton("开始导出", null, onStart, Modifier.fillMaxWidth(),
                 state.ready && !state.isWorking && name.isNotBlank() && state.songs.isNotEmpty() && state.songs.all { it.error == null && it.editedDurationUs > 0 })
         }
     }
 }
 
 @Composable
-private fun SummaryRow(label: String, value: String, icon: AppIcon) {
+private fun SummaryRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
-        AppGlyph(icon, modifier = Modifier.size(AppSpacing.large), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
         Text(value, style = MaterialTheme.typography.bodyMedium)
     }
@@ -96,10 +96,10 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, 
         val batchMaxHeight = (maxHeight * 0.55f).coerceAtMost(360.dp)
         Column {
             SheetHeader("转换设置与命名", AppIcon.VIDEO, onClose)
-            Text("输出格式：MP3", Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.xSmall),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("MP3 · 自动保存到成果库", Modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (videos.size <= 1) {
-                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = AppSpacing.page, vertical = AppSpacing.small)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = AppSpacing.page, vertical = AppSpacing.large)) {
                     val video = videos.singleOrNull()
                     if (video == null) Text("请先添加需要转换的视频。", style = MaterialTheme.typography.bodyMedium)
                     else ConversionNameField(state.videoNames[video.id].orEmpty(), { onName(video.id, it) })
@@ -116,9 +116,8 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, 
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.page, vertical = AppSpacing.medium),
-                verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
-                PrimaryActionButton("开始转换", AppIcon.VIDEO, onStart, Modifier.fillMaxWidth(),
+            ActionDock {
+                PrimaryActionButton("开始转换", null, onStart, Modifier.fillMaxWidth(),
                     state.ready && !state.isWorking && videos.isNotEmpty() && videos.all { !state.videoNames[it.id].isNullOrBlank() })
             }
         }
@@ -128,7 +127,7 @@ fun VideoNameOptions(state: WorkspaceUiState, onName: (String, String) -> Unit, 
 @Composable
 private fun ConversionNameField(name: String, onName: (String) -> Unit) {
     val focus = LocalFocusManager.current
-    OutlinedTextField(
+    TextField(
         value = name, onValueChange = onName, label = { Text("文件名（不含扩展名）") },
         shape = MaterialTheme.shapes.medium, singleLine = true, modifier = Modifier.fillMaxWidth(),
         isError = name.isBlank(),

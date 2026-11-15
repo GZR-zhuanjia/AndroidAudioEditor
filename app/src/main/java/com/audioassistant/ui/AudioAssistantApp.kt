@@ -9,6 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,17 +22,16 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,6 +51,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.audioassistant.ui.components.AppGlyph
 import com.audioassistant.ui.components.AppIcon
+import com.audioassistant.ui.components.AppModalSheet
 import com.audioassistant.ui.components.EditorOptions
 import com.audioassistant.ui.components.ExportOptions
 import com.audioassistant.ui.components.HomeAppBar
@@ -63,7 +65,6 @@ import com.audioassistant.ui.components.SaveCopyOptions
 import com.audioassistant.ui.components.RenameResultDialog
 import com.audioassistant.ui.components.DeleteResultDialog
 import com.audioassistant.ui.navigation.AppBottomBar
-import com.audioassistant.ui.navigation.AppMotion
 import com.audioassistant.ui.navigation.Destination
 import com.audioassistant.ui.navigation.EDITOR_ROUTE
 import com.audioassistant.ui.screens.EditWorkspaceScreen
@@ -72,7 +73,6 @@ import com.audioassistant.ui.screens.EditorScreen
 import com.audioassistant.ui.screens.HomeScreen
 import com.audioassistant.ui.screens.LibraryScreen
 import com.audioassistant.ui.screens.VideoScreen
-import com.audioassistant.ui.theme.AppSheetShape
 import com.audioassistant.ui.theme.AppSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -83,6 +83,7 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     // ViewModel 属于 Activity，绝不在每个 composable 路由内重新创建队列。
     val state by workspace.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val sheetActionScope = rememberCoroutineScope()
     LaunchedEffect(Unit) { withContext(Dispatchers.Default) { AppIcon.entries.forEach { it.vector } } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { workspace.editor.pauseForBackground(); workspace.resultPreview.pause() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -165,8 +166,8 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             StateBanner(state.loadingMessage, state.errorMessage, workspace::dismissError)
             NavHost(navController = nav, startDestination = Destination.HOME.route, modifier = Modifier.weight(1f),
-                enterTransition = { AppMotion.enter() }, exitTransition = { AppMotion.exit() },
-                popEnterTransition = { AppMotion.enter() }, popExitTransition = { AppMotion.exit() },
+                enterTransition = { EnterTransition.None }, exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None }, popExitTransition = { ExitTransition.None },
             ) {
                 composable(Destination.HOME.route) {
                     HomeScreen(state.songs.size, { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
@@ -239,36 +240,43 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     val success = state.completedResult
     if (success != null) {
         val playback by workspace.resultPreview.summary.collectAsStateWithLifecycle()
-        ModalBottomSheet(onDismissRequest = workspace::dismissSuccess, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
-            SuccessOptions(success, { workspace.onResultAction(success.id, it) }, onLibrary = {
+        AppModalSheet(sheetActionScope, workspace::dismissSuccess,
+            isOpen = { workspace.state.value.completedResult?.id == success.id }) { finish ->
+            SuccessOptions(success, { action ->
+                if (action == "另存" || action == "另存到 U 盘") finish {
+                    workspace.onResultAction(success.id, action)
+                } else workspace.onResultAction(success.id, action)
+            }, onLibrary = { finish {
                 workspace.dismissSuccess()
                 workspace.selectCategory(ResultCategory.ALL)
                 navigateTo(Destination.LIBRARY)
-            }, onClose = workspace::dismissSuccess, playback = playback, enabled = state.ready && !state.isWorking)
+            } }, onClose = { finish { workspace.dismissSuccess() } }, playback = playback, enabled = state.ready && !state.isWorking)
         }
     } else if (state.saveTarget != null) {
         val result = state.results.firstOrNull { it.id == state.saveTarget }
-        if (result != null) ModalBottomSheet(onDismissRequest = workspace::closeSaveOptions,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
+        if (result != null) AppModalSheet(sheetActionScope, workspace::closeSaveOptions,
+            isOpen = { workspace.state.value.saveTarget == result.id }) { finish ->
             SaveCopyOptions(result, state.saveLocation, state.ready && !state.isWorking, state.errorMessage,
-                onSave = { workspace.saveResultCopy(result.id) }, onChoose = { launchPicker {
+                onSave = { finish { workspace.saveResultCopy(result.id) } }, onChoose = { launchPicker {
                     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
                     state.saveLocation?.uri?.let { intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it)) }
                     saveFolder.launch(intent)
-                } }, onClose = workspace::closeSaveOptions)
+                } }, onClose = { finish { workspace.closeSaveOptions() } })
         }
     } else if (state.sheet != null) {
-        ModalBottomSheet(onDismissRequest = workspace::closeSheet, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.background, shape = AppSheetShape, tonalElevation = 0.dp) {
+        val activeSheet = state.sheet
+        AppModalSheet(sheetActionScope, workspace::closeSheet,
+            isOpen = { workspace.state.value.sheet == activeSheet }) { finish ->
+            val close = { finish { workspace.closeSheet() } }
             when (state.sheet) {
-                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, workspace::closeSheet, { workspace.startConversions() })
-                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, workspace::closeSheet, workspace::startExport)
+                AppSheet.VIDEO_NAMES -> VideoNameOptions(state, workspace::setVideoName, close,
+                    { finish { workspace.startConversions() } })
+                AppSheet.EXPORT -> ExportOptions(state, workspace::setExportName, workspace::setNormalize, close,
+                    { finish { workspace.startExport() } })
                 AppSheet.MORE_EDIT -> {
                     val editor by workspace.editor.state.collectAsStateWithLifecycle()
-                    EditorOptions(editor, workspace::closeSheet, workspace.editor::act, workspace.editor::inputBoundary,
+                    EditorOptions(editor, close, workspace.editor::act, workspace.editor::inputBoundary,
                         workspace.editor::adjustBoundary, workspace.editor::boundaryAtPosition,
                         workspace.editor::restoreDeleted, workspace.editor::inputSeek)
                 }
