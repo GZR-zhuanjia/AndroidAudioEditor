@@ -210,3 +210,7 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 ## 0.5.2 工作区成果选择
 
 剪辑页空/有歌曲的“从成果库添加”统一打开AppSheet.IMPORT_RESULTS与ResultImportOptions，消费同一WorkspaceUiState.results。点文件复用AppModalSheet.finish收起后调用既有addResultToProject，不改变路由；存储仍验证实体/大小、拒绝重复、直接引用并原子保存。列表独立滚动，空库/已添加/失效状态来自真实数据。没有修改0.5.1主题/导航/动画。
+
+## 2026-11-16 · 页面淡入淡出（0.5.3）
+
+NavHost四类进入/退出过渡统一标准fadeIn/fadeOut，顶部以路由为目标Crossfade，使用目标路由自己的标题与图标，共用PageFadeDurationMs=180和LinearEasing。动画由Compose管理；不加定时器、滑动/缩放、自定义底栏动画或新依赖。

@@ -9,8 +9,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -78,6 +81,8 @@ import com.audioassistant.ui.theme.AppSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private const val PageFadeDurationMs = 180
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
@@ -143,22 +148,26 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            if (!inEditor && current == Destination.HOME) HomeAppBar { workspace.unavailable("设置") }
-            else TopAppBar(
-                title = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                        if (!inEditor) AppGlyph(current.icon, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(if (inEditor) "单曲裁剪" else current.title, style = MaterialTheme.typography.headlineSmall)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                navigationIcon = {
-                    if (inEditor) IconButton(onClick = { exitEditor() }) { AppGlyph(AppIcon.BACK, "返回歌曲列表") }
-                },
-                actions = {
-                    if (inEditor && editorSong != null && editorSong.error == null) TextAction("更多编辑", AppIcon.TUNE, { workspace.showSheet(AppSheet.MORE_EDIT) })
-                },
-            )
+            Crossfade(targetState = route, animationSpec = tween(PageFadeDurationMs, easing = LinearEasing), label = "页面标题") { headerRoute ->
+                val headerInEditor = headerRoute == EDITOR_ROUTE
+                val headerDestination = Destination.entries.firstOrNull { it.route == headerRoute } ?: Destination.HOME
+                if (!headerInEditor && headerDestination == Destination.HOME) HomeAppBar { workspace.unavailable("设置") }
+                else TopAppBar(
+                    title = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+                            if (!headerInEditor) AppGlyph(headerDestination.icon, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(if (headerInEditor) "单曲裁剪" else headerDestination.title, style = MaterialTheme.typography.headlineSmall)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                    navigationIcon = {
+                        if (headerInEditor) IconButton(onClick = { exitEditor() }) { AppGlyph(AppIcon.BACK, "返回歌曲列表") }
+                    },
+                    actions = {
+                        if (headerInEditor && editorSong != null && editorSong.error == null) TextAction("更多编辑", AppIcon.TUNE, { workspace.showSheet(AppSheet.MORE_EDIT) })
+                    },
+                )
+            }
         },
         bottomBar = {
             if (!inEditor) AppBottomBar(current, !state.isReordering) { navigateTo(it) }
@@ -167,8 +176,10 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             StateBanner(state.loadingMessage, state.errorMessage, workspace::dismissError)
             NavHost(navController = nav, startDestination = Destination.HOME.route, modifier = Modifier.weight(1f),
-                enterTransition = { EnterTransition.None }, exitTransition = { ExitTransition.None },
-                popEnterTransition = { EnterTransition.None }, popExitTransition = { ExitTransition.None },
+                enterTransition = { fadeIn(tween(PageFadeDurationMs, easing = LinearEasing)) },
+                exitTransition = { fadeOut(tween(PageFadeDurationMs, easing = LinearEasing)) },
+                popEnterTransition = { fadeIn(tween(PageFadeDurationMs, easing = LinearEasing)) },
+                popExitTransition = { fadeOut(tween(PageFadeDurationMs, easing = LinearEasing)) },
             ) {
                 composable(Destination.HOME.route) {
                     HomeScreen(state.songs.size, { navigateTo(Destination.VIDEO) }, { navigateTo(Destination.EDIT) })
