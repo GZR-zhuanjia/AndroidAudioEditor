@@ -55,6 +55,7 @@ class AudioEditor(
     private var stage: EditorStage = EditorStage.Ready
     private var busy = false
     private var closing = false
+    private var seeking = false
     private var localError: String? = null
     private var epoch = 0L
 
@@ -70,7 +71,7 @@ class AudioEditor(
             stage = stage, positionUs = if (current == null && requestedSongId != null) null else playback.positionUs, isPlaying = playback.playing,
             playbackReady = playback.ready && !busy && !closing, editingReady = current != null && !busy && !closing,
             canUndo = current?.undo?.isNotEmpty() == true, canRedo = current?.redo?.isNotEmpty() == true,
-            canMark = playback.mode == PreviewMode.EDITED, songId = requestedSongId, busy = busy || closing,
+            canMark = playback.mode == PreviewMode.EDITED, songId = requestedSongId, busy = busy || closing, seeking = seeking,
             error = localError ?: playback.error,
             durationUs = if (playback.mode == PreviewMode.ORIGINAL) originalDurationUs else current?.let { SegmentTimeline.duration(it.segments) } ?: 0,
             editedDurationUs = current?.let { SegmentTimeline.duration(it.segments) } ?: 0,
@@ -99,7 +100,7 @@ class AudioEditor(
         scope.launch {
             mutex.withLock {
                 if (token != epoch) return@withLock
-                busy = true; localError = null; song = null; stage = EditorStage.Ready; preview.clear(); publish()
+                busy = true; seeking = false; localError = null; song = null; stage = EditorStage.Ready; preview.clear(); publish()
                 try {
                     val project = repository.snapshot.value.project
                     val selected = project.songs.first { it.id == id }
@@ -130,6 +131,11 @@ class AudioEditor(
         val selected = stage as? EditorStage.RangeMarked ?: error("请先标记开始和结束")
         return selected.startUs to selected.endUs
     }
+    private fun completeRange(first: Long, second: Long): EditorStage.RangeMarked {
+        preview.pause()
+        require(first != second) { "两个标记不能在同一时间，请移动播放位置后再试" }
+        return EditorStage.RangeMarked(minOf(first, second), maxOf(first, second))
+    }
     private fun attempt(action: () -> Unit) {
         if (busy || closing) return
         localError = null
@@ -139,6 +145,7 @@ class AudioEditor(
 
     fun act(action: EditorAction) = attempt {
         val current = song ?: return@attempt
+        if (seeking) return@attempt
         when (action) {
             EditorAction.PLAY_PAUSE -> if (preview.state.value.playing) preview.pause() else {
                 if (stage is EditorStage.AtSeam) stage = EditorStage.Ready
@@ -149,14 +156,17 @@ class AudioEditor(
             EditorAction.FORWARD -> preview.seek(preview.positionUs() + 5_000_000)
             EditorAction.MARK_START -> {
                 require(preview.state.value.mode == PreviewMode.EDITED && preview.state.value.ready) { "请先切回编辑结果试听" }
-                stage = EditorStage.StartMarked(editedPosition()) // 不暂停、不重建播放列表。
+                val position = editedPosition()
+                val end = (stage as? EditorStage.EndMarked)?.endUs
+                // 第一枚开始标记不中断播放；结束已标时，第二枚标记完成选区并暂停。
+                stage = if (end == null) EditorStage.StartMarked(position) else completeRange(position, end)
             }
             EditorAction.MARK_END -> {
-                val start = (stage as? EditorStage.StartMarked)?.startUs ?: error("请先标记开始")
+                require(preview.state.value.mode == PreviewMode.EDITED && preview.state.value.ready) { "请先切回编辑结果试听" }
+                val start = (stage as? EditorStage.StartMarked)?.startUs
                 val end = editedPosition()
-                preview.pause() // 即使范围无效也响应结束按钮暂停。
-                require(end > start) { "结束时间必须晚于开始时间" }
-                stage = EditorStage.RangeMarked(start, end)
+                preview.pause()
+                stage = if (start == null) EditorStage.EndMarked(end) else completeRange(start, end)
             }
             EditorAction.CANCEL_MARK -> { val position = editedPosition(); preview.pause(); stage = EditorStage.Ready; edited(position) }
             EditorAction.PREVIEW_RANGE -> {
@@ -245,27 +255,37 @@ class AudioEditor(
         preview.pause()
         val selected = stage as? EditorStage.RangeMarked
         val begun = stage as? EditorStage.StartMarked
+        val ended = stage as? EditorStage.EndMarked
         if (start) {
-            if (selected != null) { require(valueUs < selected.endUs) { "起点必须早于终点" }; stage = selected.copy(startUs = valueUs) }
+            val end = selected?.endUs ?: ended?.endUs
+            if (end != null) { require(valueUs < end) { "起点必须早于终点" }; stage = EditorStage.RangeMarked(valueUs, end) }
             else stage = EditorStage.StartMarked(valueUs)
         } else {
-            val from = selected?.startUs ?: begun?.startUs ?: error("请先设置起点")
-            require(valueUs > from) { "终点必须晚于起点" }
-            stage = EditorStage.RangeMarked(from, valueUs)
+            val from = selected?.startUs ?: begun?.startUs
+            if (from == null) stage = EditorStage.EndMarked(valueUs)
+            else {
+                require(valueUs > from) { "终点必须晚于起点" }
+                stage = EditorStage.RangeMarked(from, valueUs)
+            }
         }
     }
     fun inputBoundary(start: Boolean, text: String) = attempt { setBoundary(start, TimeInput.parseUs(text)) }
     fun adjustBoundary(start: Boolean, deltaUs: Long) {
         val selected = stage as? EditorStage.RangeMarked
         val begun = stage as? EditorStage.StartMarked
-        val value = if (start) selected?.startUs ?: begun?.startUs else selected?.endUs
+        val ended = stage as? EditorStage.EndMarked
+        val value = if (start) selected?.startUs ?: begun?.startUs else selected?.endUs ?: ended?.endUs
         if (value == null) { localError = "请先设置相应时间"; publish() } else setBoundary(start, value + deltaUs)
     }
     fun boundaryAtPosition(start: Boolean) = setBoundary(start, editedPosition())
     fun inputSeek(text: String) = attempt { seek(TimeInput.parseUs(text)) }
+    fun pauseForSeeking() = attempt { if (song != null) { seeking = true; preview.pause() } }
+    fun cancelSeeking() { seeking = false; publish() }
     fun seek(positionUs: Long) = attempt {
+        seeking = false
         preview.pause()
         if (preview.state.value.mode == PreviewMode.ORIGINAL) preview.seek(positionUs.coerceIn(0, originalDurationUs))
+        else if (preview.state.value.mode == PreviewMode.EDITED && preview.state.value.ready) preview.seek(positionUs.coerceIn(0, song?.let { SegmentTimeline.duration(it.segments) } ?: 0))
         else edited(positionUs.coerceIn(0, song?.let { SegmentTimeline.duration(it.segments) } ?: 0))
     }
 
@@ -281,7 +301,7 @@ class AudioEditor(
     }
     fun close(onClosed: () -> Unit) {
         if (closing) return
-        closing = true; preview.pause(); publish(); ++epoch
+        closing = true; seeking = false; preview.pause(); publish(); ++epoch
         scope.launch { mutex.withLock {
             busy = true; publish()
             try { saveCursor(); waveform.clear(); song = null; requestedSongId = null; stage = EditorStage.Ready; localError = null; preview.clear(); onClosed() }
@@ -291,6 +311,7 @@ class AudioEditor(
         } }
     }
     fun pauseForBackground() {
+        seeking = false
         preview.pause()
         if (song != null && !busy && !closing) scope.launch { mutex.withLock {
             busy = true; publish()

@@ -1,8 +1,11 @@
 package com.audioassistant.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +24,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -39,17 +43,20 @@ import com.audioassistant.waveform.WaveformPhase
 import com.audioassistant.waveform.WaveformState
 import java.util.Locale
 import kotlin.math.roundToLong
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 private data class Bar(val peak: Float, val rms: Float)
+private enum class WaveGesture { TAP, SEEK, TRANSFORM }
 
-/** Auxiliary timeline: tap seeks, pinch zooms and horizontal drag pans. Button editing stays primary. */
+/** Auxiliary timeline: one finger seeks, two fingers pan/zoom. Button editing stays primary. */
 @Composable
 fun WaveformPanel(
     waveform: WaveformState, editor: EditorPresentation, onSeek: (Long) -> Unit,
     onRetry: () -> Unit, onCancel: () -> Unit,
+    onSeekStart: () -> Unit = {}, onSeekCancel: () -> Unit = {},
 ) {
     when (waveform.phase) {
         WaveformPhase.EMPTY -> NoteRow("正在准备波形分析…", AppIcon.WAVE)
@@ -76,7 +83,7 @@ fun WaveformPanel(
             }
             val total = remember(parts) { parts.sumOf { it.durationUs } }
             if (total <= 0) { NoteRow("已无保留音频，恢复片段后显示波形", AppIcon.WAVE); return }
-            WaveformViewport(data, parts, total, editor, onSeek)
+            WaveformViewport(data, parts, total, editor, onSeek, onSeekStart, onSeekCancel)
         }
     }
 }
@@ -84,10 +91,16 @@ fun WaveformPanel(
 @Composable
 private fun WaveformViewport(
     data: WaveformData, parts: List<AudioSegment>, total: Long, editor: EditorPresentation, onSeek: (Long) -> Unit,
+    onSeekStart: () -> Unit, onSeekCancel: () -> Unit,
 ) {
     var zoom by rememberSaveable(editor.songId, editor.originalPreview) { mutableStateOf(1f) }
     var start by rememberSaveable(editor.songId, editor.originalPreview) { mutableLongStateOf(0L) }
     var width by remember { mutableIntStateOf(0) }
+    var scrubUs by remember(data, parts, editor.originalPreview) { mutableStateOf<Long?>(null) }
+    val latestEditor by rememberUpdatedState(editor)
+    val seek by rememberUpdatedState(onSeek)
+    val beginSeek by rememberUpdatedState(onSeekStart)
+    val cancelSeek by rememberUpdatedState(onSeekCancel)
     val visible = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
     val from = start.coerceIn(0, total - visible)
     val barCount = (width / 4).coerceIn(1, 1024)
@@ -100,31 +113,69 @@ private fun WaveformViewport(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(if (editor.originalPreview) "原曲波形" else "编辑波形", style = MaterialTheme.typography.titleSmall)
             Row {
-                TextButton(onClick = { zoom = (zoom / 2).coerceAtLeast(1f) }, enabled = zoom > 1f) { Text("缩小") }
+                TextButton(onClick = { zoom = (zoom / 2).coerceAtLeast(1f) }, enabled = zoom > 1f && !editor.seeking) { Text("缩小") }
                 TextButton(onClick = {
                     zoom = (zoom * 2).coerceAtMost(64f)
                     start = ((editor.positionUs ?: from) - total / zoom / 2).roundToLong().coerceAtLeast(0)
-                }, enabled = zoom < 64f) { Text("放大") }
+                }, enabled = zoom < 64f && !editor.seeking) { Text("放大") }
             }
         }
         Surface(shape = MaterialTheme.shapes.medium, color = colors.surfaceContainerLow) {
             Canvas(Modifier.fillMaxWidth().height(112.dp).padding(horizontal = 8.dp, vertical = 12.dp)
-                .semantics { contentDescription = "真实音频峰值与RMS波形，可通过播放和时间按钮精确定位" }
+                .semantics { contentDescription = "真实音频峰值与RMS波形，单指拖动定位，双指缩放平移；也可用进度条和时间按钮定位" }
                 .onSizeChanged { width = it.width }
-                .pointerInput(from, visible, editor.editingReady) {
-                    detectTapGestures { point -> if (editor.editingReady && size.width > 0) onSeek(from + (point.x / size.width * visible).toLong()) }
-                }
-                .pointerInput(total) {
-                    detectTransformGestures { centroid, pan, scale, _ ->
-                        if (size.width > 0) {
-                            val oldVisible = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
-                            val oldStart = start.coerceIn(0, total - oldVisible)
-                            val fraction = (centroid.x / size.width).coerceIn(0f, 1f)
-                            val anchor = oldStart + oldVisible * fraction
-                            zoom = (zoom * scale).coerceIn(1f, 64f)
-                            val newVisible = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
-                            start = (anchor - newVisible * fraction - pan.x / size.width * newVisible)
-                                .roundToLong().coerceIn(0, total - newVisible)
+                .pointerInput(data, parts, total, editor.originalPreview, editor.editingReady) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (!latestEditor.editingReady || !latestEditor.playbackReady || latestEditor.seeking || size.width <= 0) return@awaitEachGesture
+                        val span = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
+                        val origin = start.coerceIn(0, total - span)
+                        fun target(point: Offset): Long = (origin + (point.x.toDouble() / size.width).coerceIn(0.0, 1.0) * span).roundToLong().coerceIn(0, total)
+                        var mode = WaveGesture.TAP
+                        var started = false
+                        var committed = false
+                        var point = down.position
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.changes.any { it.isConsumed } || !latestEditor.editingReady || !latestEditor.playbackReady) break
+                                if (event.changes.count { it.pressed } >= 2) {
+                                    if (started) { cancelSeek(); started = false; scrubUs = null }
+                                    mode = WaveGesture.TRANSFORM
+                                    val centroid = event.calculateCentroid(useCurrent = false)
+                                    val pan = event.calculatePan()
+                                    val scale = event.calculateZoom()
+                                    val oldVisible = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
+                                    val oldStart = start.coerceIn(0, total - oldVisible)
+                                    val fraction = (centroid.x / size.width).coerceIn(0f, 1f)
+                                    val anchor = oldStart + oldVisible * fraction
+                                    zoom = (zoom * scale).coerceIn(1f, 64f)
+                                    val newVisible = (total / zoom).toLong().coerceIn(minOf(total, 100_000L), total)
+                                    start = (anchor - newVisible * fraction - pan.x / size.width * newVisible)
+                                        .roundToLong().coerceIn(0, total - newVisible)
+                                } else if (mode != WaveGesture.TRANSFORM) {
+                                    if (latestEditor.seeking && !started) break
+                                    event.changes.firstOrNull { it.id == down.id }?.let { point = it.position }
+                                    val delta = point - down.position
+                                    if (mode == WaveGesture.TAP && (abs(delta.x) > viewConfiguration.touchSlop || abs(delta.y) > viewConfiguration.touchSlop)) {
+                                        // Yield vertical swipes to the surrounding information list.
+                                        if (abs(delta.y) >= abs(delta.x)) break
+                                        mode = WaveGesture.SEEK; started = true; scrubUs = target(point); beginSeek()
+                                    }
+                                    if (mode == WaveGesture.SEEK) scrubUs = target(point)
+                                }
+                                if (mode != WaveGesture.TAP) event.changes.forEach { it.consume() }
+                                if (event.changes.none { it.pressed }) {
+                                    if (mode != WaveGesture.TRANSFORM) {
+                                        committed = true; seek(target(point))
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                    break
+                                }
+                            }
+                        } finally {
+                            scrubUs = null
+                            if (started && !committed) cancelSeek()
                         }
                     }
                 }) {
@@ -136,6 +187,8 @@ private fun WaveformViewport(
                     }
                     val marker = (editor.stage as? EditorStage.StartMarked)?.startUs ?: range?.startUs
                     if (marker != null && marker in from..from + visible) drawLine(colors.secondary, Offset(x(marker), 0f), Offset(x(marker), size.height), 2.dp.toPx())
+                    val endMarker = (editor.stage as? EditorStage.EndMarked)?.endUs ?: range?.endUs
+                    if (endMarker != null && endMarker in from..from + visible) drawLine(colors.primary, Offset(x(endMarker), 0f), Offset(x(endMarker), size.height), 2.dp.toPx())
                 }
                 drawLine(colors.onSurfaceVariant.copy(alpha = 0.22f), Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 1f)
                 val step = size.width / barCount
@@ -147,7 +200,7 @@ private fun WaveformViewport(
                     if (peak > 0) drawLine(colors.primary.copy(alpha = 0.4f), center.copy(y = center.y - peak), center.copy(y = center.y + peak), (step * 0.6f).coerceAtLeast(1f))
                     if (rms > 0) drawLine(colors.primary, center.copy(y = center.y - rms), center.copy(y = center.y + rms), (step * 0.6f).coerceAtLeast(1f))
                 }
-                editor.positionUs?.takeIf { it in from..from + visible }?.let {
+                (scrubUs ?: editor.positionUs)?.takeIf { it in from..from + visible }?.let {
                     drawLine(colors.tertiary, Offset(x(it), 0f), Offset(x(it), size.height), 2.dp.toPx())
                 }
             }
@@ -156,7 +209,8 @@ private fun WaveformViewport(
             Text(formatTime(from), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
             Text(formatTime(from + visible), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
         }
-        Text("峰值 / RMS · 显示倍率 ${String.format(Locale.CHINA, "%.1f", gain)}× · 点按定位，双指缩放、拖动平移",
+        scrubUs?.let { Text("定位到 ${formatTime(it)} · 松手跳转", style = MaterialTheme.typography.bodySmall, color = colors.primary) }
+        Text("峰值 / RMS · 显示倍率 ${String.format(Locale.CHINA, "%.1f", gain)}× · 单指拖动定位，双指缩放平移",
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
 }

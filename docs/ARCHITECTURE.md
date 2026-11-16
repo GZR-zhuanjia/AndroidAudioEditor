@@ -214,3 +214,11 @@ AppIcon沿用原37个本地XML中的路径，改为缓存ImageVector，后台预
 ## 2026-11-16 · 页面淡入淡出（0.5.3）
 
 NavHost四类进入/退出过渡统一标准fadeIn/fadeOut，顶部以路由为目标Crossfade，使用目标路由自己的标题与图标，共用PageFadeDurationMs=180和LinearEasing。动画由Compose管理；不加定时器、滑动/缩放、自定义底栏动画或新依赖。
+
+## 0.5.4 裁剪器交互
+
+EditorPlaybackPanel固定在上部，包含歌曲信息、真实时间、Material Slider、标记与播放控制；竖屏下方反馈/波形独立LazyColumn，矮横屏左右分区，主控过高时只滚动该分区。选区反馈先于波形，避免补齐标记后看不到下一步。
+
+会话新增EndMarked和seeking展示状态，不增加项目序列化字段。MARK_END可先记录，MARK_START补齐时也暂停；按钮补齐用min/max排序，等时保留前一个标记并报错。setBoundary数字输入仍严格校验起止，EndMarked可调整/取消，已有非破坏裁切/撤销/保存流程不变。
+
+Slider拖动暂存候选比例，开始调用pauseForSeeking、完成调用seek、取消/离页/后台清理拖动状态，拖动期间阻止播放/编辑误触。已准备的编辑时间线直接Media3 seek，不为每个位置重建列表；选区/接缝试听退出时才恢复完整编辑时间线。WaveformPanel用同一指针处理区分单指点击/横拖定位、双指缩放平移，竖滑让给信息列表；候选播放线只在松手时提交，取消不提交。波形数据/原生层不变，没有新动画。

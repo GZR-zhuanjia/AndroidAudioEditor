@@ -231,6 +231,8 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
                         onWaveformRetry = workspace.editor.waveform::retry,
                         onWaveformCancel = workspace.editor.waveform::cancel,
                         onWaveformSeek = workspace.editor::seek,
+                        onSeekStart = workspace.editor::pauseForSeeking,
+                        onSeekCancel = workspace.editor::cancelSeeking,
                     )
                 }
             }

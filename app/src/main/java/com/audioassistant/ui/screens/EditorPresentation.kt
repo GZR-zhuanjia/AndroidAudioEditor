@@ -4,6 +4,7 @@ package com.audioassistant.ui.screens
 sealed interface EditorStage {
     data object Ready : EditorStage
     data class StartMarked(val startUs: Long) : EditorStage
+    data class EndMarked(val endUs: Long) : EditorStage
     data class RangeMarked(val startUs: Long, val endUs: Long) : EditorStage
     data class AtSeam(val positionUs: Long, val message: String = "已删除选区") : EditorStage
 }
@@ -19,6 +20,7 @@ data class EditorPresentation(
     val canMark: Boolean = false,
     val songId: String? = null,
     val busy: Boolean = false,
+    val seeking: Boolean = false,
     val error: String? = null,
     val durationUs: Long = 0,
     val editedDurationUs: Long = 0,

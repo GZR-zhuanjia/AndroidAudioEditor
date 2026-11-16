@@ -59,7 +59,8 @@ fun EditorOptions(
                     item {
                         val range = state.stage as? EditorStage.RangeMarked
                         val begun = state.stage as? EditorStage.StartMarked
-                        val value = if (start) range?.startUs ?: begun?.startUs else range?.endUs
+                        val ended = state.stage as? EditorStage.EndMarked
+                        val value = if (start) range?.startUs ?: begun?.startUs else range?.endUs ?: ended?.endUs
                         var text by rememberSaveable(state.songId, start, value) { mutableStateOf(value?.let(::preciseTime).orEmpty()) }
                         val label = if (start) "开始时间" else "结束时间"
                         val icon = if (start) AppIcon.START else AppIcon.END
@@ -85,7 +86,7 @@ fun EditorOptions(
                 val range = state.stage is EditorStage.RangeMarked
                 val actions = listOf(
                     Triple(EditorAction.PREVIEW_RANGE, AppIcon.PLAY, range && state.playbackReady),
-                    Triple(EditorAction.CANCEL_MARK, AppIcon.CLOSE, state.stage is EditorStage.StartMarked || range),
+                    Triple(EditorAction.CANCEL_MARK, AppIcon.CLOSE, state.stage is EditorStage.StartMarked || state.stage is EditorStage.EndMarked || range),
                     Triple(EditorAction.SPLIT, AppIcon.SPLIT, state.editedDurationUs > 0),
                     Triple(EditorAction.KEEP_RANGE, AppIcon.CUT, range),
                     Triple(EditorAction.UNDO, AppIcon.UNDO, state.canUndo),

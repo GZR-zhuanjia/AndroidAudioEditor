@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,12 +19,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import com.audioassistant.ui.SongItemUi
-import com.audioassistant.ui.components.ActionDock
 import com.audioassistant.ui.components.ActionPair
 import com.audioassistant.ui.components.AppGlyph
 import com.audioassistant.ui.components.AppIcon
@@ -38,6 +48,10 @@ import com.audioassistant.ui.components.WaveformPanel
 import com.audioassistant.ui.theme.AppSpacing
 import com.audioassistant.waveform.WaveformState
 import java.util.Locale
+import kotlin.math.roundToLong
+import kotlinx.coroutines.flow.collect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 
 @Composable
 fun EditorScreen(
@@ -45,6 +59,8 @@ fun EditorScreen(
     onAction: (EditorAction) -> Unit, presentation: EditorPresentation = EditorPresentation(), isLoading: Boolean = false,
     waveform: WaveformState = WaveformState(), onWaveformRetry: () -> Unit = {},
     onWaveformCancel: () -> Unit = {}, onWaveformSeek: (Long) -> Unit = {},
+    onSeekStart: () -> Unit = {},
+    onSeekCancel: () -> Unit = {},
 ) {
     // 项目初始化由外层真实加载横幅反馈，不提前宣称没有歌曲。
     if (isLoading) return
@@ -65,82 +81,118 @@ fun EditorScreen(
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth > maxHeight && maxHeight < 440.dp) {
-            Row {
-                EditorInformation(song, presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, Modifier.weight(1f))
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { EditorControls(presentation, onAction) }
+            Row(Modifier.fillMaxSize()) {
+                EditorPlaybackPanel(song, presentation, onAction, onWaveformSeek, onSeekStart, onSeekCancel,
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                EditorInformation(presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, onSeekStart, onSeekCancel, Modifier.weight(1f))
             }
         } else {
             Column {
-                EditorInformation(song, presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, Modifier.weight(1f))
-                // 选区/接缝反馈仅改变信息区，主控区域不增减行、不因阶段跳动。
-                EditorControls(presentation, onAction)
+                // 主控固定在上部时间/进度旁，下面的波形与选区独立滚动；小屏只约束主控分区。
+                EditorPlaybackPanel(song, presentation, onAction, onWaveformSeek, onSeekStart, onSeekCancel,
+                    Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.65f).verticalScroll(rememberScrollState()))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                EditorInformation(presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, onSeekStart, onSeekCancel, Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun EditorInformation(
-    song: SongItemUi, state: EditorPresentation, onAdjustTime: () -> Unit,
-    onAction: (EditorAction) -> Unit, waveform: WaveformState, onWaveformRetry: () -> Unit,
-    onWaveformCancel: () -> Unit, onWaveformSeek: (Long) -> Unit, modifier: Modifier,
+private fun EditorPlaybackPanel(
+    song: SongItemUi, state: EditorPresentation, onAction: (EditorAction) -> Unit,
+    onSeek: (Long) -> Unit, onSeekStart: () -> Unit, onSeekCancel: () -> Unit, modifier: Modifier,
 ) {
-    LazyColumn(modifier, contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
-        item {
-            Text(song.name, style = MaterialTheme.typography.titleMedium)
-            Text("原始 ${formatTime(song.originalDurationUs)} · 已保留 ${formatTime(song.editedDurationUs)}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("${state.previewLabel} · 未做响度均衡", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-            state.error?.let { NoteRow(it, AppIcon.ERROR) }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.Bottom) {
-                Column(Modifier.weight(1f)) {
-                    Text("当前播放时间", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(editorTime(state.positionUs), style = MaterialTheme.typography.headlineSmall)
-                }
-                Text("/ ${formatTime(state.durationUs)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    var pending by remember(state.songId, state.originalPreview, state.durationUs) { mutableStateOf<Float?>(null) }
+    val interactions = remember { MutableInteractionSource() }
+    LaunchedEffect(interactions) {
+        interactions.interactions.collect { if (it is DragInteraction.Cancel && pending != null) { pending = null; onSeekCancel() } }
+    }
+    DisposableEffect(state.songId, state.originalPreview, state.durationUs) { onDispose { onSeekCancel() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { pending = null; onSeekCancel() }
+    val total = state.durationUs.coerceAtLeast(0)
+    val fraction = if (total > 0) ((state.positionUs ?: 0).toDouble() / total).toFloat().coerceIn(0f, 1f) else 0f
+    val displayUs = pending?.let { (it.toDouble() * total).roundToLong() } ?: state.positionUs
+    Column(modifier.padding(horizontal = AppSpacing.page, vertical = AppSpacing.small),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.xSmall)) {
+        Text(song.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text("原始 ${formatTime(song.originalDurationUs)} · 已保留 ${formatTime(song.editedDurationUs)} · ${state.previewLabel}",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium), verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f)) {
+                Text(if (pending == null) "当前播放时间" else "定位时间", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(editorTime(displayUs), style = MaterialTheme.typography.headlineSmall)
             }
+            Text("/ ${formatTime(total)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item {
-            WaveformPanel(waveform, state, onWaveformSeek, onWaveformRetry, onWaveformCancel)
-        }
+        Slider(value = pending ?: fraction, interactionSource = interactions,
+            enabled = state.editingReady && state.playbackReady && total > 0 && (!state.seeking || pending != null),
+            onValueChange = { value -> val first = pending == null; pending = value; if (first) onSeekStart() },
+            onValueChangeFinished = {
+                pending?.let { onSeek((it.toDouble() * total).roundToLong().coerceIn(0, total)) }
+                pending = null
+            }, modifier = Modifier.fillMaxWidth())
+        EditorControls(state, onAction, scrubbing = pending != null)
+    }
+}
+
+@Composable
+private fun EditorInformation(
+    state: EditorPresentation, onAdjustTime: () -> Unit,
+    onAction: (EditorAction) -> Unit, waveform: WaveformState, onWaveformRetry: () -> Unit,
+    onWaveformCancel: () -> Unit, onWaveformSeek: (Long) -> Unit, onSeekStart: () -> Unit, onSeekCancel: () -> Unit, modifier: Modifier,
+) {
+    val editingEnabled = state.editingReady && !state.seeking
+    val playbackEnabled = state.playbackReady && !state.seeking
+    LazyColumn(modifier, contentPadding = PagePadding, verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
+        state.error?.let { message -> item { NoteRow(message, AppIcon.ERROR) } }
         item {
             when (val stage = state.stage) {
                 EditorStage.Ready -> {
                     if (state.busy) NoteRow("正在准备试听或保存编辑…")
                     else if (state.editedDurationUs == 0L && state.editingReady) NoteRow("已无保留片段，可从更多编辑中撤销或恢复")
                     else if (!state.playbackReady && state.error == null) NoteRow("正在准备音频…")
-                    else if (state.playbackReady) NoteRow(if (state.originalPreview) "原曲试听中，可从更多编辑切回编辑结果" else "播放时标记不需要的片段起点", AppIcon.START)
+                    else if (state.playbackReady) NoteRow(if (state.originalPreview) "原曲试听中，可从更多编辑切回编辑结果" else "可以先标记开始或结束，再定位另一端", AppIcon.START)
                 }
                 is EditorStage.StartMarked -> StagePanel {
                     SectionHeader("已标记开始", icon = AppIcon.START)
                     Text(editorTime(stage.startUs), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                    Text("继续播放，在片段结束时标记结束。", style = MaterialTheme.typography.bodyMedium)
-                    TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = state.editingReady)
+                    Text("继续播放或拖动进度条，定位另一端后标记结束。", style = MaterialTheme.typography.bodyMedium)
+                    TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = editingEnabled)
+                }
+                is EditorStage.EndMarked -> StagePanel {
+                    SectionHeader("已标记结束", icon = AppIcon.END)
+                    Text(editorTime(stage.endUs), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("可拖回前面定位，再标记开始。", style = MaterialTheme.typography.bodyMedium)
+                    TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = editingEnabled)
                 }
                 is EditorStage.RangeMarked -> StagePanel {
                     SectionHeader("已选中片段", icon = AppIcon.CUT)
                     Text("${editorTime(stage.startUs)} — ${editorTime(stage.endUs)}", style = MaterialTheme.typography.titleSmall)
                     Text("选区时长 ${editorTime((stage.endUs - stage.startUs).coerceAtLeast(0))}", style = MaterialTheme.typography.bodySmall)
                     ActionPair(
-                        { SecondaryActionButton("试听选区", AppIcon.PLAY, { onAction(EditorAction.PREVIEW_RANGE) }, it, state.playbackReady) },
-                        { SecondaryActionButton("调整时间", AppIcon.TUNE, onAdjustTime, it, state.editingReady) },
+                        { SecondaryActionButton("试听选区", AppIcon.PLAY, { onAction(EditorAction.PREVIEW_RANGE) }, it, playbackEnabled) },
+                        { SecondaryActionButton("调整时间", AppIcon.TUNE, onAdjustTime, it, editingEnabled) },
                     )
-                    PrimaryActionButton("删除这段", AppIcon.DELETE, { onAction(EditorAction.DELETE_RANGE) }, Modifier.fillMaxWidth(), state.editingReady)
-                    TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = state.editingReady)
+                    PrimaryActionButton("删除这段", AppIcon.DELETE, { onAction(EditorAction.DELETE_RANGE) }, Modifier.fillMaxWidth(), editingEnabled)
+                    TextAction("取消标记", AppIcon.CLOSE, { onAction(EditorAction.CANCEL_MARK) }, enabled = editingEnabled)
                 }
                 is EditorStage.AtSeam -> StagePanel {
                     SectionHeader(stage.message, icon = AppIcon.CHECK)
                     Text("${if (state.isPlaying) "接缝位置" else "已暂停在接缝"} ${editorTime(stage.positionUs)}", style = MaterialTheme.typography.bodyMedium)
                     ActionPair(
-                        { SecondaryActionButton("试听接缝", AppIcon.SPLIT, { onAction(EditorAction.PREVIEW_SEAM) }, it, state.playbackReady) },
-                        { SecondaryActionButton("撤销", AppIcon.UNDO, { onAction(EditorAction.UNDO) }, it, state.editingReady && state.canUndo) },
+                        { SecondaryActionButton("试听接缝", AppIcon.SPLIT, { onAction(EditorAction.PREVIEW_SEAM) }, it, playbackEnabled) },
+                        { SecondaryActionButton("撤销", AppIcon.UNDO, { onAction(EditorAction.UNDO) }, it, editingEnabled && state.canUndo) },
                     )
-                    PrimaryActionButton("继续播放", AppIcon.PLAY, { onAction(EditorAction.RESUME) }, Modifier.fillMaxWidth(), state.playbackReady)
+                    PrimaryActionButton("继续播放", AppIcon.PLAY, { onAction(EditorAction.RESUME) }, Modifier.fillMaxWidth(), playbackEnabled)
                 }
             }
         }
+        item {
+            WaveformPanel(waveform, state, onWaveformSeek, onWaveformRetry, onWaveformCancel, onSeekStart, onSeekCancel)
+        }
+        item { NoteRow("普通试听未做响度均衡") }
     }
 }
 
@@ -152,20 +204,20 @@ private fun StagePanel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun EditorControls(state: EditorPresentation, onAction: (EditorAction) -> Unit) {
-    ActionDock {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-            SeekControl("后退 5 秒", AppIcon.BACKWARD, { onAction(EditorAction.BACKWARD) }, state.playbackReady, Modifier.weight(1f))
-            PrimaryActionButton(if (state.isPlaying) "暂停" else "播放", if (state.isPlaying) AppIcon.PAUSE else AppIcon.PLAY,
-                { onAction(EditorAction.PLAY_PAUSE) }, Modifier.weight(1f).heightIn(min = 56.dp), state.playbackReady)
-            SeekControl("前进 5 秒", AppIcon.FORWARD, { onAction(EditorAction.FORWARD) }, state.playbackReady, Modifier.weight(1f))
-        }
+private fun EditorControls(state: EditorPresentation, onAction: (EditorAction) -> Unit, scrubbing: Boolean) {
+    val ready = state.playbackReady && !scrubbing && !state.seeking
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
         ActionPair(
-            first = { SecondaryActionButton("标记开始", AppIcon.START, { onAction(EditorAction.MARK_START) }, it, state.editingReady && state.playbackReady && state.canMark) },
-            second = { SecondaryActionButton("标记结束", AppIcon.END, { onAction(EditorAction.MARK_END) }, it,
-                state.editingReady && state.playbackReady && state.canMark && state.stage is EditorStage.StartMarked) },
+            first = { SecondaryActionButton("标记开始", AppIcon.START, { onAction(EditorAction.MARK_START) }, it, state.editingReady && ready && state.canMark) },
+            second = { SecondaryActionButton("标记结束", AppIcon.END, { onAction(EditorAction.MARK_END) }, it, state.editingReady && ready && state.canMark) },
             stackAt = 240.dp, stackForLargeText = false,
         )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+            SeekControl("后退 5 秒", AppIcon.BACKWARD, { onAction(EditorAction.BACKWARD) }, ready, Modifier.weight(1f))
+            PrimaryActionButton(if (state.isPlaying) "暂停" else "播放", if (state.isPlaying) AppIcon.PAUSE else AppIcon.PLAY,
+                { onAction(EditorAction.PLAY_PAUSE) }, Modifier.weight(1f).heightIn(min = 56.dp), ready)
+            SeekControl("前进 5 秒", AppIcon.FORWARD, { onAction(EditorAction.FORWARD) }, ready, Modifier.weight(1f))
+        }
     }
 }
 
