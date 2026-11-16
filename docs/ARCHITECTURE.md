@@ -222,3 +222,7 @@ EditorPlaybackPanel固定在上部，包含歌曲信息、真实时间、Materia
 会话新增EndMarked和seeking展示状态，不增加项目序列化字段。MARK_END可先记录，MARK_START补齐时也暂停；按钮补齐用min/max排序，等时保留前一个标记并报错。setBoundary数字输入仍严格校验起止，EndMarked可调整/取消，已有非破坏裁切/撤销/保存流程不变。
 
 Slider拖动暂存候选比例，开始调用pauseForSeeking、完成调用seek、取消/离页/后台清理拖动状态，拖动期间阻止播放/编辑误触。已准备的编辑时间线直接Media3 seek，不为每个位置重建列表；选区/接缝试听退出时才恢复完整编辑时间线。WaveformPanel用同一指针处理区分单指点击/横拖定位、双指缩放平移，竖滑让给信息列表；候选播放线只在松手时提交，取消不提交。波形数据/原生层不变，没有新动画。
+
+## 2026-11-16 · 官方 Rounded 图标（0.5.5）
+
+AppIcon现在只映射R.drawable资源，AppGlyph使用标准Material3 Icon + painterResource。37个XML以官方SVG路径原样转换，仅group translateY=960适配负Y viewBox。移除手写PathParser/ImageVector.Builder和根界面后台预热；移除未使用material-icons-core依赖。官方图标来源固定到google/material-design-icons提交10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7，映射/SHA-256/转换说明与Apache-2.0许可在assets/licenses/MATERIAL_SYMBOLS_NOTICE.md和Material-Symbols-LICENSE.txt。

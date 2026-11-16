@@ -250,3 +250,7 @@ bash scripts/build-native.sh
 5. 波形单指横拖定位、双指缩放平移、竖滑滚动信息不误seek；单指变双指取消候选，不错误跳转。无真实波形时Slider仍可用，不画假波形，不频繁重建播放器；实际手势/性能尚未实机确认。
 
 本轮唯一git diff --check：退出码0，无空白错误，未重复执行。
+
+## 2026-11-16 · 官方 Rounded 图标（0.5.5）
+
+静态检查37个VectorDrawable XML可解析、pathData逐项与固定版本官方SVG一致、Y坐标转换正确，所有AppIcon引用已映射；旧PathParser/ImageVector.Builder/预热与未使用图标依赖已移除。没有构建APK、运行Gradle/NDK/模拟器或截图测试。本地可重点看底栏、播放/5秒跳转、标记开始/结束与深浅色下图标是否清晰。

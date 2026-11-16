@@ -78,8 +78,6 @@ import com.audioassistant.ui.screens.HomeScreen
 import com.audioassistant.ui.screens.LibraryScreen
 import com.audioassistant.ui.screens.VideoScreen
 import com.audioassistant.ui.theme.AppSpacing
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private const val PageFadeDurationMs = 180
 
@@ -90,7 +88,6 @@ fun AudioAssistantApp(workspace: WorkspaceViewModel = viewModel()) {
     val state by workspace.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val sheetActionScope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { withContext(Dispatchers.Default) { AppIcon.entries.forEach { it.vector } } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { workspace.editor.pauseForBackground(); workspace.resultPreview.pause() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (state.ready && !state.isWorking && (state.songs.isNotEmpty() || state.results.isNotEmpty())) workspace.refreshSources()

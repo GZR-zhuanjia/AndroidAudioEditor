@@ -13,8 +13,8 @@ android {
         applicationId = "com.audioassistant"
         minSdk = 33
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.4"
+        versionCode = 10
+        versionName = "0.5.5"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
             cmake { arguments += "-DANDROID_STL=c++_shared" }
@@ -47,7 +47,6 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
-    implementation(libs.compose.icons)
     debugImplementation(libs.compose.tooling)
     implementation(libs.media3.exoplayer)
     implementation(libs.kotlinx.coroutines.android)
