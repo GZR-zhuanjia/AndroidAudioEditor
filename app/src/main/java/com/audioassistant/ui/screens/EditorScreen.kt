@@ -87,10 +87,11 @@ fun EditorScreen(
                 EditorInformation(presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, onSeekStart, onSeekCancel, Modifier.weight(1f))
             }
         } else {
+            val playbackMaxHeight = maxHeight * 0.65f
             Column {
                 // 主控固定在上部时间/进度旁，下面的波形与选区独立滚动；小屏只约束主控分区。
                 EditorPlaybackPanel(song, presentation, onAction, onWaveformSeek, onSeekStart, onSeekCancel,
-                    Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.65f).verticalScroll(rememberScrollState()))
+                    Modifier.fillMaxWidth().heightIn(max = playbackMaxHeight).verticalScroll(rememberScrollState()))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 EditorInformation(presentation, onAdjustTime, onAction, waveform, onWaveformRetry, onWaveformCancel, onWaveformSeek, onSeekStart, onSeekCancel, Modifier.weight(1f))
             }
