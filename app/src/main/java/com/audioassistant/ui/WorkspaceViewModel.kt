@@ -124,7 +124,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun enqueue(label: String, action: suspend () -> Unit) {
+    private fun enqueue(label: String, showLoading: Boolean = true, action: suspend () -> Unit) {
         if (state.value.processing != null || fileJob != null) { reportError("文件正在处理中，请完成或取消后再修改列表。") ; return }
         // ActivityResult 可能在进程重建、项目加载完成前送达；先排队，读取失败时再拒绝写入。
         if (!state.value.ready && state.value.loadingMessage == null) {
@@ -132,11 +132,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         pending++
-        mutableState.update { it.copy(isWorking = true, loadingMessage = if (pending == 1) label else it.loadingMessage) }
+        // 自动保存仍串行执行并锁定冲突操作，但不向页面插入会推挤列表的加载行。
+        // 静默任务排队时保留当前任务或初始化的提示，到实际执行时再清除。
+        mutableState.update { it.copy(isWorking = true, loadingMessage = if (pending == 1 && showLoading) label else it.loadingMessage) }
         commands.trySend {
             try {
                 check(state.value.ready) { "最近项目读取失败，请重新选择文件前先处理读取问题" }
-                mutableState.update { it.copy(loadingMessage = label) }
+                mutableState.update { it.copy(loadingMessage = label.takeIf { showLoading }) }
                 action()
             }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -299,7 +301,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val byId = current.associateBy { it.id }
         mutableState.update { it.copy(songs = ids.map(byId::getValue)) }
         editor.stopWorkspacePreview()
-        enqueue("正在保存歌曲顺序…") {
+        enqueue("正在保存歌曲顺序…", showLoading = false) {
             repository.update { snapshot ->
                 val songs = snapshot.project.songs.associateBy { it.id }
                 require(ids.toSet() == songs.keys)
@@ -358,7 +360,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
     private fun persistSettings() {
         val settings = state.value.exportSettings
-        enqueue("正在保存导出设置…") { repository.update { it.copy(project = it.project.copy(exportSettings = settings)) } }
+        enqueue("正在保存导出设置…", showLoading = false) { repository.update { it.copy(project = it.project.copy(exportSettings = settings)) } }
     }
     fun setVideoName(id: String, name: String) { if (state.value.processing == null) mutableState.update { it.copy(videoNames = it.videoNames + (id to name)) } }
 

@@ -226,3 +226,7 @@ Slider拖动暂存候选比例，开始调用pauseForSeeking、完成调用seek�
 ## 2026-11-16 · 官方 Rounded 图标（0.5.5）
 
 AppIcon现在只映射R.drawable资源，AppGlyph使用标准Material3 Icon + painterResource。37个XML以官方SVG路径原样转换，仅group translateY=960适配负Y viewBox。移除手写PathParser/ImageVector.Builder和根界面后台预热；移除未使用material-icons-core依赖。官方图标来源固定到google/material-design-icons提交10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7，映射/SHA-256/转换说明与Apache-2.0许可在assets/licenses/MATERIAL_SYMBOLS_NOTICE.md和Material-Symbols-LICENSE.txt。
+
+## 2026-11-18 · 静默自动保存（0.5.6/code11）
+
+WorkspaceViewModel.enqueue新增showLoading参数，默认保持显式任务提示。reorderSongs和persistSettings传false：仍使用同一串行队列、isWorking冲突保护、原子持久化及失败恢复/反馈，仅不发布全局loadingMessage。排队阶段不清除当前任务/初始化提示；实际执行静默任务时清除加载行。拖动确认和上下移共用该排序路径，不改Compose布局或存储实现。
