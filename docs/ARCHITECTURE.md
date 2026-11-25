@@ -13,7 +13,7 @@ app/src/main/java/com/audioassistant/
   data/FileWorkspaceRepository.kt   Mutex / AtomicFile / JSON / 受控路径与引用校验
   data/MediaImporter.kt             系统元数据、持久读授权与按需内部副本
   data/LibraryRepository.kt         成果有效性、改名/删除事务
-  data/ResultFileService.kt         分享快照、SAF目录/新文件/复制回读
+  data/ResultFileService.kt         分享快照、SAF 文档复制与回读
   data/UriGrantLedger.kt            本版本获取的持久URI授权账本
   data/ResultNames.kt               MP3名称清理/去扩展名/去重
   processing/AudioProcessingService.kt  转换/导出编排、临时目录、验证与成果提交
@@ -27,7 +27,7 @@ app/src/main/java/com/audioassistant/
   ui/navigation/                   四一级入口 + 单曲裁剪子路由
   ui/screens/                      五类中文页面
   ui/components/                   面板、状态、拖动排序状态
-  ui/components/ResultControls.kt   成果播放器/复制进度、改名/删除/另存面板
+  ui/components/ResultControls.kt   成果播放器/复制进度、改名/删除对话框
   ui/theme/                        系统深浅色 Material 3
   engine/NativeAudioEngine.kt       JNI探测/波形/转换/渲染/均衡/编码，worker与取消桥
   waveform/                        多级数据读取、缓存、独立会话Flow
@@ -103,7 +103,7 @@ isReferenced同时检查项目来源、成果索引与活动文件引用计数�
 
 启动成功读取有效快照、开放任务前，清理processing/中的UUID目录及results/中无引用UUID.part/UUID.mp3；正常任务仅清自己的临时文件。损坏/未知项目不清理文件或回收权限；不恢复任务、不扫描外部源文件/未知目录。外部另存副本不在内部清理范围。
 
-UriGrantLedger在获取新持久授权之前同步记录owned_uri_grants偏好，覆盖获取与登记间的中断窗口；导入不能持久授权仍只建受控内部副本。有效项目加载后、写入队列每个操作末尾统一回收不再需要的已跟踪授权，保护PERSISTED_URI来源、当前视频与最近保存目录。未跟踪的旧版授权不擅自撤销；树授权在有同authority来源时保守保留，以免设备断开、无法判定祖先关系时伤及项目。有效项目未加载时，连排队操作的finally也不回收授权。
+UriGrantLedger在获取新持久授权之前同步记录owned_uri_grants偏好，覆盖获取与登记间的中断窗口；导入不能持久授权仍只建受控内部副本。有效项目加载后、写入队列每个操作末尾统一回收不再需要的已跟踪授权，保护PERSISTED_URI来源和当前视频。未跟踪的旧版授权不擅自撤销；树授权在有同authority来源时保守保留，以免设备断开、无法判定祖先关系时伤及项目。有效项目未加载时，连排队操作的finally也不回收授权。
 
 ## 阶段7文件交付与试听
 
@@ -111,11 +111,11 @@ ResultPreview用Media3直接播放完整内部MP3，不套原曲/剪辑片段，
 
 分享先对真实成果做受控缓存快照，写完fsync、按大小/SHA-256回读核对再发系统ACTION_SEND/ClipData只读授权。FileProvider未导出，路径只开放cache/shared_audio，不暴露files/results或来源目录。快照键含成果ID/名/大小/mtime，重复分享可复用；原库删除不立即删分享快照。完成缓存按24小时在启动/新分享时清理，启动清未完成.part；系统可提前回收cache，分享URI不是永久交付地址。chooser取消/选目标无送达回执，应用不宣称“已发送成功”。
 
-另存Bottom Sheet显示实际名称、最近位置、选择/重新选择按钮；系统ACTION_OPEN_DOCUMENT_TREE让用户授权具体目录，可选U盘，不申请广泛存储权限。external_save偏好只记最近URI/标题，是否长期授权以系统实有权限为准；仅临时授权时如实提示，重开可能重选。选择目录不假称另存完成，随后用户点保存。
+成果列表和成功面板共用系统 CreateDocument（ACTION_CREATE_DOCUMENT，audio/mpeg），预填成果名称。系统返回新建文档 URI 后立即排队复制。仅在等待选择结果时通过 rememberSaveable 保留成果 ID。取消选择不会排队，应用不再读写最近位置偏好或申请持久目录授权。
 
-每次另存重新查询目录可创建能力和全部子文档ID/名称，选择新名称，createDocument后若返回已有ID则停止、不打开写入也不删它。只对本次确认新建的文档打开写fd，复制内部原字节，尽可能fsync，关闭后重开读回，核对全长与SHA-256；完成确认前取消仅尝试清本次新文件，核对完成后的提交临界区保留已完成副本。内部文件与索引全程不移除。同名不覆盖，实际provider返回文件名用于反馈；目录超过100000项拒绝，不能用未列完的目录猜测覆盖安全。
+另存使用系统新建文档的单次 URI 授权，不枚举目录或打开已有文件。复制和分享进入工作区串行队列，等待项目读取和在途文件检查，复制任务单独可取消。写入原字节并关闭后重新读回，核对长度和 SHA-256 后才反馈完成。拒绝、失败或取消时仅尝试清理本次新建的未完成文档。
 
-U盘断开/位置失效/只读/授权失败报真实“位置不可用或读写失败”，给连接U盘和重新选择的入口，不伪造硬件检测；失败会重开另存面板，内部成果保留。新建外部文件若因拔盘无法删除，明确提示可能留下未完成副本，不在未来盲删外部文件。CancellationSignal用于provider打开，循环检查协程取消；已阻塞的provider I/O仍可能延迟。副本回读增加约一遍读取耗时，不保证物理介质断电后数据永不丢失。
+U 盘断开、位置失效、只读或授权失败时，提示检查连接并重新另存。内部成果保留。新建外部文件若因拔盘无法删除，明确提示可能留下未完成副本，不在未来盲删外部文件。CancellationSignal用于provider打开，循环检查协程取消；已阻塞的provider I/O仍可能延迟。副本回读增加约一遍读取耗时，不保证物理介质断电后数据永不丢失。
 
 ## 后续引擎与兼容性
 

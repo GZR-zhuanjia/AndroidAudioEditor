@@ -117,7 +117,7 @@ private fun ResultCard(result: ResultItemUi, onAction: (String, String) -> Unit,
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                         listOf(
                             Triple("重命名", AppIcon.EDIT, "重命名"), Triple("分享", AppIcon.SHARE, "分享"),
-                            Triple("另存 U 盘", AppIcon.USB, "另存"), Triple("添加到拼接", AppIcon.ADD, "添加到拼接"),
+                            Triple("另存为…", AppIcon.DOWNLOAD, "另存"), Triple("添加到拼接", AppIcon.ADD, "添加到拼接"),
                             Triple("删除", AppIcon.DELETE, "删除"),
                         ).forEach { (label, icon, action) ->
                             DropdownMenuItem(text = { Text(label) }, leadingIcon = { AppGlyph(icon) },

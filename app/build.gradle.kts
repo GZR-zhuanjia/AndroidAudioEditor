@@ -13,8 +13,8 @@ android {
         applicationId = "com.audioassistant"
         minSdk = 33
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.5.6"
+        versionCode = 12
+        versionName = "0.5.7"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
             cmake { arguments += "-DANDROID_STL=c++_shared" }

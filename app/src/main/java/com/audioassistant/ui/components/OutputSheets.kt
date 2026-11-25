@@ -150,7 +150,7 @@ fun SuccessOptions(result: ResultItemUi, onAction: (String) -> Unit, onLibrary: 
                 if (playback.id == result.id && playback.playing) AppIcon.PAUSE else AppIcon.PLAY,
                 { onAction("试听成果") }, Modifier.fillMaxWidth(), enabled && !(playback.id == result.id && playback.loading))
             if (playback.id == result.id && playback.error != null) NoteRow(playback.error, AppIcon.ERROR)
-            SecondaryActionButton("另存到 U 盘", AppIcon.USB, { onAction("另存到 U 盘") }, Modifier.fillMaxWidth(), enabled)
+            SecondaryActionButton("另存为…", AppIcon.DOWNLOAD, { onAction("另存") }, Modifier.fillMaxWidth(), enabled)
             TextAction("查看成果库", AppIcon.LIBRARY, onLibrary, Modifier.fillMaxWidth())
         }
     }

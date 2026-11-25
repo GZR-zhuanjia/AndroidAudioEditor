@@ -26,16 +26,6 @@ class UriGrantLedger(context: Context) {
         resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
     } }
 
-    suspend fun takeTree(uri: Uri, resultFlags: Int): Boolean = withContext(Dispatchers.IO) { mutex.withLock {
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        require((resultFlags and flags) == flags) { "保存位置未授予读写权限，请重新选择文件夹" }
-        if (!resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission && it.isWritePermission }) {
-            mark(uri)
-            try { resolver.takePersistableUriPermission(uri, flags) } catch (_: Exception) { /* session-only provider */ }
-        }
-        resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission && it.isWritePermission }
-    } }
-
     suspend fun releaseUnused(protectedUris: Set<String>) = withContext(Dispatchers.IO) { mutex.withLock {
         val tracked = owned()
         val original = tracked.toSet()

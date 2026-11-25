@@ -26,45 +26,16 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class SaveLocation(val uri: String, val name: String, val persistent: Boolean)
 data class SharePayload(val token: String, val uri: String, val name: String)
-data class SavedCopy(val name: String, val location: String)
 data class FileCopyProgress(val label: String, val fraction: Float)
 
-/** Only creates NEW documents in a user-authorized tree. Original results are always read-only. */
+/** Shares read-only snapshots and copies results to documents created by the system picker. */
 class ResultFileService(
     private val context: Context, private val repository: FileWorkspaceRepository,
-    private val grants: UriGrantLedger, private val warn: (String) -> Unit,
+    private val warn: (String) -> Unit,
 ) {
     private val resolver = context.contentResolver
-    private val preferences = context.getSharedPreferences("external_save", Context.MODE_PRIVATE)
     private val shares = File(context.cacheDir, "shared_audio")
-
-    suspend fun lastLocation(): SaveLocation? = withContext(Dispatchers.IO) {
-        val uri = preferences.getString("tree", null) ?: return@withContext null
-        val persistent = resolver.persistedUriPermissions.any { it.uri.toString() == uri && it.isReadPermission && it.isWritePermission }
-        SaveLocation(uri, preferences.getString("name", "上次位置").orEmpty(), persistent)
-    }
-
-    private fun folder(tree: Uri): Pair<Uri, String> {
-        require(tree.scheme == "content" && DocumentsContract.isTreeUri(tree)) { "请选择系统文件选择器中的文件夹" }
-        val document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        resolver.query(document, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
-            DocumentsContract.Document.COLUMN_FLAGS), null, null, null)?.use { cursor ->
-            check(cursor.moveToFirst()) { "保存位置不可用" }
-            require(cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR &&
-                (cursor.getInt(2) and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE) != 0) { "该位置不允许创建文件，请重新选择可写文件夹" }
-            return document to (cursor.getString(0) ?: "所选文件夹")
-        }
-        error("保存位置不可用，若使用U盘请确认已连接，或重新授权该位置")
-    }
-
-    suspend fun rememberLocation(uri: Uri, flags: Int): SaveLocation = withContext(Dispatchers.IO) {
-        val (_, name) = folder(uri)
-        val persistent = grants.takeTree(uri, flags)
-        check(preferences.edit().putString("tree", uri.toString()).putString("name", name).commit()) { "保存位置未能记住，请重试" }
-        SaveLocation(uri.toString(), name, persistent)
-    }
 
     private class Reporter(private val callback: (FileCopyProgress) -> Unit) {
         private var last = 0L
@@ -151,78 +122,101 @@ class ResultFileService(
         return digest.digest()
     }
 
+    /** The destination is the new document returned by ACTION_CREATE_DOCUMENT. */
     suspend fun saveCopy(
-        id: String, location: SaveLocation, report: (FileCopyProgress) -> Unit, onSaved: (SavedCopy) -> Unit,
-    ) = withContext(Dispatchers.IO) { withResult(id) { access -> coroutineScope {
-        val signal = CancellationSignal()
-        val cancellation = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-            try { awaitCancellation() } finally { signal.cancel() }
+        id: String, destination: Uri, report: (FileCopyProgress) -> Unit, onSaved: (String) -> Unit,
+    ) {
+        require(destination.scheme == "content" && DocumentsContract.isDocumentUri(context, destination)) {
+            "系统未返回有效的保存位置。"
         }
-        var ownedDocument: Uri? = null
         var finished = false
         try {
-            val tree = Uri.parse(location.uri)
-            val (parent, title) = folder(tree)
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            val ids = mutableSetOf<String>(); val names = mutableListOf<String>()
-            val cursor = resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null, signal) ?: error("无法检查目标目录，不会尝试覆盖文件")
-            cursor.use {
-                while (it.moveToNext()) {
-                    currentCoroutineContext().ensureActive()
-                    ids += requireNotNull(it.getString(0)); names += it.getString(1).orEmpty()
-                    require(ids.size <= 100000) { "目标目录文件过多，请选择其他文件夹" }
+            withContext(Dispatchers.IO) {
+                withResult(id) { access ->
+                    coroutineScope {
+                        val signal = CancellationSignal()
+                        val cancellation = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                            try { awaitCancellation() } finally { signal.cancel() }
+                        }
+                        try {
+                            val name = copyAndVerify(access, destination, signal, Reporter(report))
+                            currentCoroutineContext().ensureActive()
+                            withContext(NonCancellable) {
+                                finished = true
+                                onSaved(name)
+                            }
+                        } finally {
+                            cancellation.cancel()
+                        }
+                    }
                 }
             }
-            val desired = ResultNames.unique(access.record.displayName, names)
-            currentCoroutineContext().ensureActive()
-            val created = DocumentsContract.createDocument(resolver, parent, "audio/mpeg", desired) ?: error("无法在所选位置创建文件")
-            // A provider returning an old ID must never be opened for writing or deleted on failure.
-            require(created.authority == tree.authority && DocumentsContract.getDocumentId(created) !in ids) { "文件提供者返回了已有文件，已停止以避免覆盖" }
-            ownedDocument = created
-            val digest = MessageDigest.getInstance("SHA-256"); val reporter = Reporter(report)
-            val size = access.record.sizeBytes; var copied = 0L
-            reporter.send("正在复制到 $title", 0f, true)
-            val descriptor = resolver.openFileDescriptor(created, "w", signal) ?: error("无法打开新建副本")
-            ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output -> FileInputStream(access.file).use { input ->
-                val buffer = ByteArray(64 * 1024)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            throw IOException("另存失败。请重试并选定可写位置，使用 U 盘时请确认已连接。内部成果仍保留。\n" +
+                error.message.orEmpty(), error)
+        } finally {
+            if (!finished) discardCopy(destination)
+        }
+    }
+
+    /** Only for an unfinished document returned by this save request's system picker. */
+    suspend fun discardCopy(destination: Uri) = withContext(NonCancellable + Dispatchers.IO) {
+        val removed = runCatching {
+            destination.scheme == "content" && DocumentsContract.isDocumentUri(context, destination) &&
+                DocumentsContract.deleteDocument(resolver, destination)
+        }.getOrDefault(false)
+        if (!removed) warn("所选位置可能留下未完成副本，请检查外部文件。内部成果仍保留。")
+    }
+
+    private suspend fun copyAndVerify(
+        access: ResultAccess, destination: Uri, signal: CancellationSignal, reporter: Reporter,
+    ): String {
+        val size = access.record.sizeBytes
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        var copied = 0L
+        reporter.send("正在复制音频", 0f, true)
+        val descriptor = resolver.openFileDescriptor(destination, "w", signal) ?: error("无法打开新建副本")
+        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+            FileInputStream(access.file).use { input ->
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    val read = input.read(buffer); if (read < 0) break
-                    copied += read; require(copied <= size) { "内部成果大小已改变" }
-                    output.write(buffer, 0, read); digest.update(buffer, 0, read)
-                    reporter.send("正在复制到 $title", copied.toFloat() / size * 0.5f)
-                }
-                output.flush()
-                if (OsConstants.S_ISREG(Os.fstat(descriptor.fileDescriptor).st_mode)) output.fd.sync()
-            } }
-            require(copied == size) { "未完整读取内部成果" }
-            reporter.send("正在核对外部副本", 0.5f, true)
-            val readback = resolver.openFileDescriptor(created, "r", signal) ?: error("无法核对新副本")
-            val verified = MessageDigest.getInstance("SHA-256"); var checked = 0L
-            ParcelFileDescriptor.AutoCloseInputStream(readback).use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val read = input.read(buffer); if (read < 0) break
-                    checked += read; require(checked <= size) { "外部副本大小不符" }
-                    verified.update(buffer, 0, read); reporter.send("正在核对外部副本", 0.5f + checked.toFloat() / size * 0.5f)
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    copied += read
+                    require(copied <= size) { "内部成果大小已改变" }
+                    output.write(buffer, 0, read)
+                    digest.update(buffer, 0, read)
+                    reporter.send("正在复制音频", copied.toFloat() / size * 0.5f)
                 }
             }
-            require(checked == size && digest.digest().contentEquals(verified.digest())) { "外部副本内容核对失败" }
-            val actualName = resolver.query(created, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use {
-                if (it.moveToFirst()) it.getString(0) else null
-            } ?: desired
-            currentCoroutineContext().ensureActive()
-            withContext(NonCancellable) { finished = true; onSaved(SavedCopy(actualName, title)) }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { throw IOException("另存失败：保存位置不可用或读写失败。若使用U盘，请确认已连接，或重新选择位置。内部成果仍保留。${error.message.orEmpty()}", error) }
-        finally {
-            cancellation.cancel()
-            if (!finished && ownedDocument != null) withContext(NonCancellable + Dispatchers.IO) {
-                val removed = runCatching { DocumentsContract.deleteDocument(resolver, requireNotNull(ownedDocument)) }.getOrDefault(false)
-                if (!removed) warn("所选位置可能留下未完成副本，请重新连接后检查；内部成果没有删除。")
+            output.flush()
+            if (OsConstants.S_ISREG(Os.fstat(descriptor.fileDescriptor).st_mode)) output.fd.sync()
+        }
+        require(copied == size) { "未完整读取内部成果" }
+
+        reporter.send("正在核对外部副本", 0.5f, true)
+        val readback = resolver.openFileDescriptor(destination, "r", signal) ?: error("无法核对新副本")
+        val verified = MessageDigest.getInstance("SHA-256")
+        var checked = 0L
+        ParcelFileDescriptor.AutoCloseInputStream(readback).use { input ->
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val read = input.read(buffer)
+                if (read < 0) break
+                checked += read
+                require(checked <= size) { "外部副本大小不符" }
+                verified.update(buffer, 0, read)
+                reporter.send("正在核对外部副本", 0.5f + checked.toFloat() / size * 0.5f)
             }
         }
-    } } }
+        require(checked == size && digest.digest().contentEquals(verified.digest())) { "外部副本内容核对失败" }
+
+        return runCatching {
+            resolver.query(destination, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null, signal)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        }.getOrNull() ?: "音频副本"
+    }
 }

@@ -27,7 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.audioassistant.data.SaveLocation
 import com.audioassistant.playback.ResultPreview
 import com.audioassistant.ui.FileOperationUi
 import com.audioassistant.ui.ResultItemUi
@@ -92,26 +91,4 @@ fun DeleteResultDialog(result: ResultItemUi, enabled: Boolean, onDismiss: () -> 
             else "将移除成果库记录并清理无引用内部文件。已分享或另存到外部的副本不受影响。"), Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = { TextButton(onClick = onDelete, enabled = enabled) { Text("删除") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
-}
-
-@Composable
-fun SaveCopyOptions(result: ResultItemUi, location: SaveLocation?, enabled: Boolean, error: String?, onSave: () -> Unit, onChoose: () -> Unit, onClose: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        SheetHeader("另存音频副本", AppIcon.USB, onClose)
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(AppSpacing.page), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-            Text(result.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            NoteRow("选择U盘中的文件夹即可另存；内部成果会保留，同名会新建副本。", AppIcon.USB)
-            error?.let { NoteRow(it, AppIcon.ERROR) }
-            if (location != null) {
-                Text("上次位置：${location.name}", style = MaterialTheme.typography.bodyMedium)
-                if (!location.persistent) NoteRow("此位置未保留长期读写授权，重开后可能需要重新选择")
-            }
-        }
-        ActionDock {
-            if (location != null) {
-                PrimaryActionButton("保存到此位置", AppIcon.USB, onSave, Modifier.fillMaxWidth(), enabled)
-                SecondaryActionButton("重新选择位置", AppIcon.FOLDER, onChoose, Modifier.fillMaxWidth(), enabled)
-            } else PrimaryActionButton("选择保存位置", AppIcon.FOLDER, onChoose, Modifier.fillMaxWidth(), enabled)
-        }
-    }
 }
